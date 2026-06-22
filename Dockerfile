@@ -43,4 +43,4 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 ENV NODE_ENV=production
 
 # Command to run database migrations and start the bot
-CMD ["sh", "-c", "npx prisma db push && node dist/index.js"]
+CMD ["sh", "-c", "npx prisma db push --accept-data-loss && node dist/index.js"]
