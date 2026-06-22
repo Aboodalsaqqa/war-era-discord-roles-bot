@@ -1,0 +1,48 @@
+node_modules
+dist
+
+# Environment variables
+.env
+.env.production
+.env.local
+
+# Database files
+*.db
+*.db-journal
+dev.db
+dev.db-journal
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# IDE configurations
+.idea
+.vscode
+
+# Agent/AI directories
+.gemini
+.agents
+
+# Optional deployment files if switching providers
+railway.json
+
+# Scratch files and temporary directories
+scratch_*
+*.py
+*.csv
+data.txt
+out.json
+pythonlec/
+barasalfah/
+partyhub/
+ts/
+discord/

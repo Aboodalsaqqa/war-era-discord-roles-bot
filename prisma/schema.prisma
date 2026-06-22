@@ -1,0 +1,98 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model UserLink {
+  id                         String    @id @default(uuid())
+  discordId                  String    @unique
+  wareraUserId               String    @unique
+  wareraUsername             String
+  verifiedAt                 DateTime  @default(now())
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+  lastRecruitmentReminderAt  DateTime? // Tracks daily recruitment DMs
+  exemptFromRecruitment      Boolean   @default(false) // Recruitment exemption flag
+}
+
+model GuildConfig {
+  id                    String   @id @default(uuid())
+  guildId               String   @unique
+  citizenRoleId         String?
+  presidentRoleId       String?
+  vicePresidentRoleId   String?
+  congressRoleId        String?
+  warRoleId             String?
+  economyRoleId         String?
+  hybridRoleId          String?
+  officerRoleId         String?  // Configured officer role for MoD access
+  trustedRoleId         String?  // MUST have this role to sync and participate in MoD systems
+  muCommanderRoleId     String?  // Assigned if player is commander of their MU
+  muOwnerRoleId         String?  // Assigned if player is owner/founder of their MU
+  noMuRoleId            String?  // Assigned if player is not in any MU
+  updatedAt             DateTime @updatedAt
+}
+
+model MuRole {
+  id            String   @id @default(uuid())
+  guildId       String
+  muId          String
+  muName        String
+  discordRoleId String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([guildId, muId])
+}
+
+model LevelRole {
+  id            String   @id @default(uuid())
+  guildId       String
+  minimumLevel  Int
+  discordRoleId String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([guildId, minimumLevel])
+}
+
+model RecruitmentCampaign {
+  id           String    @id @default(uuid())
+  guildId      String
+  title        String
+  minimumLevel Int
+  active       Boolean   @default(true)
+  createdBy    String
+  createdAt    DateTime  @default(now())
+  endedAt      DateTime?
+}
+
+model Operation {
+  id          String              @id @default(uuid())
+  guildId     String
+  title       String
+  message     String
+  targetType  String              // "war", "economy", "hybrid", "level", "mu", "all"
+  targetMuId  String?
+  targetLevel Int?                // Minimum level required if targetType is "level"
+  createdBy   String
+  createdAt   DateTime            @default(now())
+  sentToCount Int                 @default(0)
+  responses   OperationResponse[]
+}
+
+model OperationResponse {
+  id          String    @id @default(uuid())
+  operationId String
+  discordId   String
+  response    String    // "available", "unavailable"
+  createdAt   DateTime  @default(now())
+
+  operation   Operation @relation(fields: [operationId], references: [id], onDelete: Cascade)
+
+  @@unique([operationId, discordId])
+}
