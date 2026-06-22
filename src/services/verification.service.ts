@@ -70,7 +70,14 @@ export class VerificationService {
     wareraUsername: string
   ): Promise<UserLink> {
     logger.info({ discordId, wareraUserId, wareraUsername }, 'Linking Discord account to WarEra profile');
-    return this.repository.upsertUserLink(discordId, wareraUserId, wareraUsername);
+    try {
+      return await this.repository.upsertUserLink(discordId, wareraUserId, wareraUsername);
+    } catch (error: any) {
+      if (error.code === 'P2002') {
+        throw new Error(`The WarEra account **${wareraUsername}** is already linked to another Discord user in this server.`);
+      }
+      throw error;
+    }
   }
 
   /**
