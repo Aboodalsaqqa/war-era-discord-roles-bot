@@ -1,6 +1,9 @@
 # --- Build Stage ---
 FROM node:22-alpine AS builder
 
+# Install OpenSSL for Prisma
+RUN apk add --no-cache openssl
+
 WORKDIR /app
 
 # Copy dependency files
@@ -19,6 +22,9 @@ RUN npx prisma generate
 
 # --- Runner Stage ---
 FROM node:22-alpine AS runner
+
+# Install OpenSSL for Prisma
+RUN apk add --no-cache openssl
 
 WORKDIR /app
 
