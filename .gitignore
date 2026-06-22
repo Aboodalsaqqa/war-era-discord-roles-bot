@@ -41,8 +41,8 @@ scratch_*
 *.csv
 data.txt
 out.json
-pythonlec/
-barasalfah/
-partyhub/
-ts/
-discord/
+/pythonlec/
+/barasalfah/
+/partyhub/
+/ts/
+/discord/
