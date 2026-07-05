@@ -108,12 +108,22 @@ export async function initDiscordBot(): Promise<Client> {
     // Register slash commands
     try {
       const rest = new REST({ version: '10' }).setToken(config.discordToken);
-      logger.info('Registering application (/) commands globally...');
-      await rest.put(
-        Routes.applicationCommands(config.discordClientId),
-        { body: getSlashCommandsDefinition() }
-      );
-      logger.info('Application (/) commands registered successfully.');
+      const commandsBody = getSlashCommandsDefinition();
+      
+      logger.info(`Registering ${commandsBody.length} application (/) commands...`);
+
+      // Temporarily register commands per-guild during development for instant updates
+      // Global commands (Routes.applicationCommands) take up to 1 hour to propagate to all servers.
+      const guilds = readyClient.guilds.cache;
+      for (const [guildId, guild] of guilds) {
+        logger.info(`Registering commands instantly for guild: ${guild.name} (${guildId})`);
+        await rest.put(
+          Routes.applicationGuildCommands(config.discordClientId, guildId),
+          { body: commandsBody }
+        );
+      }
+      
+      logger.info(`Successfully registered ${commandsBody.length} commands across ${guilds.size} guild(s).`);
     } catch (err) {
       logger.error({ error: (err as Error).message }, 'Failed to register slash commands');
     }
