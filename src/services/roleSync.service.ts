@@ -109,7 +109,7 @@ export class RoleSyncService {
       // If the member lacks either role, synchronization stops entirely.
       const hasCitizen = config.citizenRoleId ? member.roles.cache.has(config.citizenRoleId) : true;
       const hasTrusted = config.trustedRoleId ? member.roles.cache.has(config.trustedRoleId) : true;
-      const isTrusted = hasCitizen && hasTrusted;
+      const isTrusted = hasCitizen || hasTrusted;
 
       if (!isTrusted) {
         logger.info(logCtx, `Member ${member.user.tag} lacks the citizen or trusted role. All managed roles will be removed.`);
