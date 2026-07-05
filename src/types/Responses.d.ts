@@ -1335,6 +1335,7 @@ export interface MuListItem {
   name: string;
   rankings: MuRankingsOptional;
   region: string;
+  country: string;
   roles: MuRoles;
   updatedAt: string;
   user: string;

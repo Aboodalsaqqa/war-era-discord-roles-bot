@@ -6,6 +6,7 @@ import { RecruitmentCommands } from './recruitment.commands';
 import { OperationCommands } from './operation.commands';
 import { ReadinessCommands } from './readiness.commands';
 import { VerificationManagementCommands } from './verificationManagement.commands';
+import { AuditCommands } from './audit.commands';
 import { logger } from '../utils/logger';
 
 // Slash commands definition mapping
@@ -504,6 +505,11 @@ export const getSlashCommandsDefinition = () => [
     description: 'Export all verified users to a CSV file (Admin only)',
     default_member_permissions: PermissionFlagsBits.Administrator.toString(),
   },
+  {
+    name: 'mu-audit',
+    description: 'Audit every Egyptian Military Unit against Discord role mappings (Admin only)',
+    default_member_permissions: PermissionFlagsBits.Administrator.toString(),
+  },
 ];
 
 export class CommandRouter {
@@ -514,7 +520,8 @@ export class CommandRouter {
     private readonly recruitmentCommands: RecruitmentCommands,
     private readonly operationCommands: OperationCommands,
     private readonly readinessCommands: ReadinessCommands,
-    private readonly verificationManagementCommands: VerificationManagementCommands
+    private readonly verificationManagementCommands: VerificationManagementCommands,
+    private readonly auditCommands: AuditCommands
   ) {}
 
   async handleInteraction(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -567,6 +574,9 @@ export class CommandRouter {
           break;
         case 'verified-export':
           await this.verificationManagementCommands.handleExportCommand(interaction);
+          break;
+        case 'mu-audit':
+          await this.auditCommands.muAudit(interaction);
           break;
         default:
           logger.warn({ commandName }, 'Received unhandled command name');

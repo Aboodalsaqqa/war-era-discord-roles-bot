@@ -28,6 +28,7 @@ import { RecruitmentCommands } from '../commands/recruitment.commands';
 import { OperationCommands } from '../commands/operation.commands';
 import { ReadinessCommands } from '../commands/readiness.commands';
 import { VerificationManagementCommands } from '../commands/verificationManagement.commands';
+import { AuditCommands } from '../commands/audit.commands';
 import { CommandRouter, getSlashCommandsDefinition } from '../commands';
 
 // Jobs
@@ -87,6 +88,7 @@ export async function initDiscordBot(): Promise<Client> {
   const operationCommands = new OperationCommands(operationService, guildConfigRepo);
   const readinessCommands = new ReadinessCommands(readinessService, guildConfigRepo);
   const verificationManagementCommands = new VerificationManagementCommands(verificationManagementService, guildConfigRepo);
+  const auditCommands = new AuditCommands(muRoleRepo, wareraService);
 
   const commandRouter = new CommandRouter(
     userCommands,
@@ -95,7 +97,8 @@ export async function initDiscordBot(): Promise<Client> {
     recruitmentCommands,
     operationCommands,
     readinessCommands,
-    verificationManagementCommands
+    verificationManagementCommands,
+    auditCommands
   );
 
   // 2. Events Setup

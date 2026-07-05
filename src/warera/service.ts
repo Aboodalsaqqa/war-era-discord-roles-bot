@@ -4,6 +4,8 @@ import {
   CountryListItem,
   GovernmentGetByCountryIdResponse,
   MuGetByIdResponse,
+  MuListItem,
+  MuGetManyPaginatedResponse,
 } from '../types/Responses';
 import { logger } from '../utils/logger';
 
@@ -97,5 +99,38 @@ export class WarEraService {
    */
   async getMu(muId: string): Promise<MuGetByIdResponse> {
     return this.client.request('mu.getById', { muId });
+  }
+
+  /**
+   * Fetches all Military Units globally and filters them by Egypt country ID
+   */
+  async getAllEgyptMus(): Promise<MuListItem[]> {
+    const egyptId = await this.getEgyptCountryId();
+    let allMus: MuListItem[] = [];
+    let nextCursor: string | undefined = undefined;
+
+    logger.info('Fetching all MUs from WarEra API to filter for Egypt...');
+
+    while (true) {
+      const response: MuGetManyPaginatedResponse = await this.client.request('mu.getManyPaginated', {
+        limit: 100,
+        cursor: nextCursor,
+      });
+
+      if (response.items && response.items.length > 0) {
+        allMus = allMus.concat(response.items);
+      }
+
+      if (response.nextCursor) {
+        nextCursor = response.nextCursor;
+      } else {
+        break;
+      }
+    }
+
+    const egyptMus = allMus.filter((mu) => mu.country === egyptId);
+    logger.info({ totalGlobal: allMus.length, totalEgypt: egyptMus.length }, 'Completed fetching Egypt MUs');
+    
+    return egyptMus;
   }
 }
