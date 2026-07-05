@@ -7,6 +7,7 @@ import { UserLinkRepository } from '../repositories/userLink.repository';
 import { WarEraService } from '../warera/service';
 import { logger } from '../utils/logger';
 import { prisma } from '../database';
+import { syncMemberNickname } from './nicknameSync.service';
 
 export class RoleSyncService {
   constructor(
@@ -47,6 +48,9 @@ export class RoleSyncService {
 
       // 2. Fetch latest profile
       const profile = await this.wareraService.getUserProfile(userLink.wareraUserId);
+
+      // Synchronize Discord nickname to match WarEra username
+      await syncMemberNickname(guild, member, profile.username);
 
       // 3. Update username in DB if changed
       if (profile.username !== userLink.wareraUsername) {
