@@ -88,6 +88,22 @@ export class RoleSyncService {
         if (id) managedRoleIds.add(id);
       });
 
+      // ===== DEBUG: Citizen/Trusted Role Check =====
+      const memberRoleIds = Array.from(member.roles.cache.keys());
+      const memberRoleNames = Array.from(member.roles.cache.values()).map(r => r.name);
+      logger.info({
+        ...logCtx,
+        configuredCitizenRoleId: config.citizenRoleId || 'NOT_CONFIGURED',
+        configuredTrustedRoleId: config.trustedRoleId || 'NOT_CONFIGURED',
+        memberRoleIds,
+        memberRoleNames,
+        hasCitizenResult: config.citizenRoleId ? member.roles.cache.has(config.citizenRoleId) : 'N/A (not configured)',
+        hasTrustedResult: config.trustedRoleId ? member.roles.cache.has(config.trustedRoleId) : 'N/A (not configured)',
+        memberRoleCount: memberRoleIds.length,
+        memberFetchedViaForce: member.id === memberParam.id,
+      }, 'DEBUG: Citizen/Trusted role check details');
+      // ===== END DEBUG =====
+
       // Check Citizen Role & Trusted Role status (both act as trust/verification checks).
       // These roles are assigned manually by server staff. They are NOT managed by the bot.
       // If the member lacks either role, synchronization stops entirely.
