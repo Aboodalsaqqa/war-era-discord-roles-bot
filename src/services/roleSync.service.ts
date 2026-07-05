@@ -88,131 +88,136 @@ export class RoleSyncService {
         if (id) managedRoleIds.add(id);
       });
 
-      // Check Citizen Role & Trusted Role status (both act as trust/verification checks)
-      const hasCitizen = config.citizenRoleId ? member.roles.cache.has(config.citizenRoleId) : true;
-      const hasTrusted = config.trustedRoleId ? member.roles.cache.has(config.trustedRoleId) : true;
-      const isTrusted = hasCitizen && hasTrusted;
+      // Citizen Role: The bot assigns this to every verified member during sync.
+      // It is a managed role, not a prerequisite.
+      if (config.citizenRoleId) {
+        managedRoleIds.add(config.citizenRoleId);
+        targetRoleIds.add(config.citizenRoleId);
+      }
 
-      if (!isTrusted) {
-        logger.info(logCtx, `Member ${member.user.tag} lacks the citizen or trusted role. All managed roles will be removed.`);
-      } else {
-        // --- Country Roles ---
-        const egyptId = await this.wareraService.getEgyptCountryId();
-        const belongsToEgypt = profile.country === egyptId;
+      // Trusted Role: An OPTIONAL external gate assigned manually by admins.
+      // If configured and the member does NOT have it, skip government/leadership roles only.
+      // All other managed roles (MU, level, specialization, citizen) are still assigned.
+      const isTrusted = config.trustedRoleId ? member.roles.cache.has(config.trustedRoleId) : true;
 
-        if (belongsToEgypt) {
-          // Fetch Egypt Government info for presidency / congress
-          try {
-            const gov = await this.wareraService.getGovernment(egyptId);
-            if (profile._id === gov.president && config.presidentRoleId) {
-              targetRoleIds.add(config.presidentRoleId);
-            }
-            if (profile._id === gov.vicePresident && config.vicePresidentRoleId) {
-              targetRoleIds.add(config.vicePresidentRoleId);
-            }
-            if (gov.congressMembers && gov.congressMembers.includes(profile._id) && config.congressRoleId) {
-              targetRoleIds.add(config.congressRoleId);
-            }
-          } catch (govError) {
-            logger.error(
-              { ...logCtx, error: (govError as Error).message },
-              'Failed to fetch government details during role sync'
-            );
+      // --- Country Roles (require Trusted if configured) ---
+      const egyptId = await this.wareraService.getEgyptCountryId();
+      const belongsToEgypt = profile.country === egyptId;
+
+      if (belongsToEgypt && isTrusted) {
+        // Fetch Egypt Government info for presidency / congress
+        try {
+          const gov = await this.wareraService.getGovernment(egyptId);
+          if (profile._id === gov.president && config.presidentRoleId) {
+            targetRoleIds.add(config.presidentRoleId);
           }
-        }
-
-        // --- MU Roles ---
-        if (profile.mu) {
-          const muMapping = muRoles.find(m => m.muId === profile.mu);
-          if (muMapping) {
-            targetRoleIds.add(muMapping.discordRoleId);
+          if (profile._id === gov.vicePresident && config.vicePresidentRoleId) {
+            targetRoleIds.add(config.vicePresidentRoleId);
           }
-        }
-
-        // --- Level Roles ---
-        const userLevel = profile.leveling?.level || 0;
-        const matchingLevelRoles = levelRoles.filter(lr => userLevel >= lr.minimumLevel);
-        if (matchingLevelRoles.length > 0) {
-          const highestMatching = matchingLevelRoles.reduce((max, current) => 
-            current.minimumLevel > max.minimumLevel ? current : max
+          if (gov.congressMembers && gov.congressMembers.includes(profile._id) && config.congressRoleId) {
+            targetRoleIds.add(config.congressRoleId);
+          }
+        } catch (govError) {
+          logger.error(
+            { ...logCtx, error: (govError as Error).message },
+            'Failed to fetch government details during role sync'
           );
-          targetRoleIds.add(highestMatching.discordRoleId);
         }
+      } else if (!isTrusted) {
+        logger.info(logCtx, `Member ${member.user.tag} lacks the trusted role. Government/leadership roles will be skipped.`);
+      }
 
-        // --- Specialization Roles ---
-        const skills = profile.skills || {};
-        
-        const warScore =
-          (skills.attack?.level || 0) +
-          (skills.precision?.level || 0) +
-          (skills.criticalChance?.level || 0) +
-          (skills.criticalDamages?.level || 0) +
-          (skills.armor?.level || 0) +
-          (skills.dodge?.level || 0) +
-          (skills.lootChance?.level || 0);
-
-        const economyScore =
-          (skills.production?.level || 0) +
-          (skills.management?.level || 0) +
-          (skills.entrepreneurship?.level || 0) +
-          (skills.companies?.level || 0);
-
-        let targetSpecRoleId: string | null = null;
-        if (warScore >= economyScore * 1.5) {
-          targetSpecRoleId = config.warRoleId;
-        } else if (economyScore >= warScore * 1.5) {
-          targetSpecRoleId = config.economyRoleId;
-        } else {
-          targetSpecRoleId = config.hybridRoleId;
+      // --- MU Roles ---
+      if (profile.mu) {
+        const muMapping = muRoles.find(m => m.muId === profile.mu);
+        if (muMapping) {
+          targetRoleIds.add(muMapping.discordRoleId);
         }
+      }
 
-        if (targetSpecRoleId) {
-          targetRoleIds.add(targetSpecRoleId);
+      // --- Level Roles ---
+      const userLevel = profile.leveling?.level || 0;
+      const matchingLevelRoles = levelRoles.filter(lr => userLevel >= lr.minimumLevel);
+      if (matchingLevelRoles.length > 0) {
+        const highestMatching = matchingLevelRoles.reduce((max, current) => 
+          current.minimumLevel > max.minimumLevel ? current : max
+        );
+        targetRoleIds.add(highestMatching.discordRoleId);
+      }
+
+      // --- Specialization Roles ---
+      const skills = profile.skills || {};
+      
+      const warScore =
+        (skills.attack?.level || 0) +
+        (skills.precision?.level || 0) +
+        (skills.criticalChance?.level || 0) +
+        (skills.criticalDamages?.level || 0) +
+        (skills.armor?.level || 0) +
+        (skills.dodge?.level || 0) +
+        (skills.lootChance?.level || 0);
+
+      const economyScore =
+        (skills.production?.level || 0) +
+        (skills.management?.level || 0) +
+        (skills.entrepreneurship?.level || 0) +
+        (skills.companies?.level || 0);
+
+      let targetSpecRoleId: string | null = null;
+      if (warScore >= economyScore * 1.5) {
+        targetSpecRoleId = config.warRoleId;
+      } else if (economyScore >= warScore * 1.5) {
+        targetSpecRoleId = config.economyRoleId;
+      } else {
+        targetSpecRoleId = config.hybridRoleId;
+      }
+
+      if (targetSpecRoleId) {
+        targetRoleIds.add(targetSpecRoleId);
+      }
+
+      // --- MU Leadership & No MU Roles ---
+      if (profile.mu) {
+        try {
+          const muDetails = await this.wareraService.getMu(profile.mu);
+          const isOwner = profile._id === muDetails.user;
+          const isCommander = muDetails.roles?.commanders?.includes(profile._id) || false;
+
+          if (isOwner && config.muOwnerRoleId) {
+            targetRoleIds.add(config.muOwnerRoleId);
+          } else if (isCommander && config.muCommanderRoleId) {
+            targetRoleIds.add(config.muCommanderRoleId);
+          }
+        } catch (muErr) {
+          logger.error(
+            { ...logCtx, muId: profile.mu, error: (muErr as Error).message },
+            'Failed to fetch MU details for commander/owner check during role sync'
+          );
         }
+      } else {
+        if (config.noMuRoleId) {
+          targetRoleIds.add(config.noMuRoleId);
+        }
+      }
 
-        // --- MU Leadership & No MU Roles ---
-        if (profile.mu) {
+      // Recruitment Completion Detection: transition to War Specialist
+      if (config.warRoleId) {
+        const previouslyWasNotWar = !member.roles.cache.has(config.warRoleId);
+        const nowIsWar = targetSpecRoleId === config.warRoleId;
+
+        if (previouslyWasNotWar && nowIsWar) {
           try {
-            const muDetails = await this.wareraService.getMu(profile.mu);
-            const isOwner = profile._id === muDetails.user;
-            const isCommander = muDetails.roles?.commanders?.includes(profile._id) || false;
-
-            if (isOwner && config.muOwnerRoleId) {
-              targetRoleIds.add(config.muOwnerRoleId);
-            } else if (isCommander && config.muCommanderRoleId) {
-              targetRoleIds.add(config.muCommanderRoleId);
+            const activeCampaign = await prisma.recruitmentCampaign.findFirst({
+              where: { guildId: guild.id, active: true },
+            });
+            if (activeCampaign) {
+              await member.send({
+                content: `✅ **Thank you for joining the Egyptian military.**\n\nYou are now registered as a War Specialist.\n\n*Future recruitment reminders for this campaign have been stopped for you.*`,
+              }).catch(() => null);
+              logger.info({ userId: member.id }, 'Recruitment completion DM sent successfully');
             }
-          } catch (muErr) {
-            logger.error(
-              { ...logCtx, muId: profile.mu, error: (muErr as Error).message },
-              'Failed to fetch MU details for commander/owner check during role sync'
-            );
-          }
-        } else {
-          if (config.noMuRoleId) {
-            targetRoleIds.add(config.noMuRoleId);
-          }
-        }
-
-        // Recruitment Completion Detection: transition to War Specialist
-        if (config.warRoleId) {
-          const previouslyWasNotWar = !member.roles.cache.has(config.warRoleId);
-          const nowIsWar = targetSpecRoleId === config.warRoleId;
-
-          if (previouslyWasNotWar && nowIsWar) {
-            try {
-              const activeCampaign = await prisma.recruitmentCampaign.findFirst({
-                where: { guildId: guild.id, active: true },
-              });
-              if (activeCampaign) {
-                await member.send({
-                  content: `✅ **Thank you for joining the Egyptian military.**\n\nYou are now registered as a War Specialist.\n\n*Future recruitment reminders for this campaign have been stopped for you.*`,
-                }).catch(() => null);
-                logger.info({ userId: member.id }, 'Recruitment completion DM sent successfully');
-              }
-            } catch (campaignErr) {
-              logger.error({ error: (campaignErr as Error).message }, 'Failed during recruitment completion check');
-            }
+          } catch (campaignErr) {
+            logger.error({ error: (campaignErr as Error).message }, 'Failed during recruitment completion check');
           }
         }
       }
