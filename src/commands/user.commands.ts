@@ -181,6 +181,27 @@ export class UserCommands {
       }
     }
 
+    // Fetch Owned MUs
+    let ownedMusList = '';
+    try {
+      const ownedMus = await this.wareraService.getOwnedMus(profile._id);
+      if (ownedMus.length > 0) {
+        ownedMusList = ownedMus.map(m => `• ${m.name}`).join('\n');
+      }
+    } catch (err) {
+      logger.warn({ error: (err as Error).message }, 'Failed to fetch owned MUs');
+    }
+
+    // Fetch Local Egypt Rankings
+    let totalRankNum: number | null = null;
+    let weeklyRankNum: number | null = null;
+    try {
+      totalRankNum = await this.wareraService.getEgyptUserRank(profile._id, 'userDamages');
+      weeklyRankNum = await this.wareraService.getEgyptUserRank(profile._id, 'weeklyUserDamages');
+    } catch (err) {
+      logger.warn({ error: (err as Error).message }, 'Failed to fetch Egypt rankings');
+    }
+
     // Compute Specialization
     const skills = profile.skills || {};
     const warScore =
@@ -212,37 +233,35 @@ export class UserCommands {
     // Prepare variables
     const level = profile.leveling?.level !== undefined ? profile.leveling.level : '?';
     const totalDamage = profile.stats?.damagesCount !== undefined ? profile.stats.damagesCount.toLocaleString() : '0';
-    const totalDamageRank = profile.rankings?.userDamages?.rank !== undefined ? `#${profile.rankings.userDamages.rank}` : 'Unranked';
+    const totalDamageRank = totalRankNum ? `#${totalRankNum}` : 'Unranked';
     const weeklyDamage = profile.rankings?.weeklyUserDamages?.value !== undefined ? profile.rankings.weeklyUserDamages.value.toLocaleString() : '0';
-    const weeklyDamageRank = profile.rankings?.weeklyUserDamages?.rank !== undefined ? `#${profile.rankings.weeklyUserDamages.rank}` : 'Unranked';
-
-    let description = `**👤 ${profile.username}**\n\n`;
-    description += `**⭐ Level:** ${level}\n\n`;
-    description += `**${specializationText}**${specializationSubText}\n\n`;
-    description += `**⚔ Total Damage:** ${totalDamage}\n`;
-    description += `**🇪🇬 Egypt Total Damage Rank:** ${totalDamageRank}\n\n`;
-    description += `**🔥 Weekly Damage:** ${weeklyDamage}\n`;
-    description += `**🇪🇬 Egypt Weekly Damage Rank:** ${weeklyDamageRank}\n\n`;
-    description += `**⭐ Military Unit:** ${muName}`;
-
-    // Special top ranking messages
-    const totalRankNum = profile.rankings?.userDamages?.rank;
-    const weeklyRankNum = profile.rankings?.weeklyUserDamages?.rank;
-
-    const isRank1 = totalRankNum === 1 || weeklyRankNum === 1;
-    const isTop10 = (totalRankNum !== undefined && totalRankNum >= 2 && totalRankNum <= 10) || 
-                    (weeklyRankNum !== undefined && weeklyRankNum >= 2 && weeklyRankNum <= 10);
-
-    if (isRank1) {
-      description += `\n\n**👑 الباشا الكبير**`;
-    } else if (isTop10) {
-      description += `\n\n**💥 اخويا المدرعة الي الضربة منه باربعة**`;
-    }
+    const weeklyDamageRank = weeklyRankNum ? `#${weeklyRankNum}` : 'Unranked';
 
     const embed = new EmbedBuilder()
       .setColor('#2b2d31') // Modern dark invisible color for premium feel
       .setThumbnail(profile.avatarUrl || 'https://raw.githubusercontent.com/discord/discord-logo-template/master/discord-logo-blue.png')
-      .setDescription(description);
+      .setDescription(`**👤 ${profile.username}**\n**⭐ Level:** ${level}\n\n**${specializationText}**${specializationSubText}`)
+      .addFields(
+        { name: '⚔ Total Damage', value: `${totalDamage}\n🇪🇬 Egypt Rank: **${totalDamageRank}**`, inline: true },
+        { name: '🔥 Weekly Damage', value: `${weeklyDamage}\n🇪🇬 Egypt Rank: **${weeklyDamageRank}**`, inline: true },
+        { name: '\u200B', value: '\u200B', inline: true }, // Empty field for alignment
+        { name: '🏛 Current Active MU', value: muName, inline: false }
+      );
+
+    if (ownedMusList) {
+      embed.addFields({ name: '👑 Owned Military Units', value: ownedMusList, inline: false });
+    }
+
+    // Special top ranking messages
+    const isRank1 = totalRankNum === 1 || weeklyRankNum === 1;
+    const isTop10 = (totalRankNum !== null && totalRankNum >= 2 && totalRankNum <= 10) || 
+                    (weeklyRankNum !== null && weeklyRankNum >= 2 && weeklyRankNum <= 10);
+
+    if (isRank1) {
+      embed.addFields({ name: '\u200B', value: '> **👑 الباشا الكبير**', inline: false });
+    } else if (isTop10) {
+      embed.addFields({ name: '\u200B', value: '> **💥 اخويا المدرعة الي الضربة منه باربعة**', inline: false });
+    }
 
     return embed;
   }

@@ -1344,6 +1344,8 @@ export interface MuListItem {
 export interface RankingItem {
   _id: string;
   country: string;
+  user?: string;
+  mu?: string;
   rank: number;
   tier: string;
   value: number;

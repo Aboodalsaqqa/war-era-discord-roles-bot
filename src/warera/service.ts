@@ -6,12 +6,17 @@ import {
   MuGetByIdResponse,
   MuListItem,
   MuGetManyPaginatedResponse,
+  RankingItem,
 } from '../types/Responses';
 import { logger } from '../utils/logger';
 
 export class WarEraService {
   private readonly client: WarEraClient;
   private egyptCountryId: string | null = null;
+  private countryCache: CountryListItem[] | null = null;
+  private countryCacheTimestamp: number = 0;
+  
+  private rankingCaches: Record<string, { items: RankingItem[]; timestamp: number }> = {};
 
   constructor(client: WarEraClient) {
     this.client = client;
@@ -132,5 +137,69 @@ export class WarEraService {
     logger.info({ totalGlobal: allMus.length, totalEgypt: egyptMus.length }, 'Completed fetching Egypt MUs');
     
     return egyptMus;
+  }
+
+  /**
+   * Fetches all Military Units owned by a specific user
+   */
+  async getOwnedMus(userId: string): Promise<MuListItem[]> {
+    let allMus: MuListItem[] = [];
+    let nextCursor: string | undefined = undefined;
+
+    while (true) {
+      const response: MuGetManyPaginatedResponse = await this.client.request('mu.getManyPaginated', {
+        userId,
+        limit: 100,
+        cursor: nextCursor,
+      });
+
+      if (response.items && response.items.length > 0) {
+        allMus = allMus.concat(response.items);
+      }
+
+      if (response.nextCursor) {
+        nextCursor = response.nextCursor;
+      } else {
+        break;
+      }
+    }
+    
+    return allMus;
+  }
+
+  /**
+   * Calculates the Egypt-specific ranking for a user using a 5-minute memory cache
+   */
+  async getEgyptUserRank(userId: string, rankingType: 'userDamages' | 'weeklyUserDamages'): Promise<number | null> {
+    const egyptId = await this.getEgyptCountryId();
+    const cacheKey = rankingType;
+    const cacheDuration = 5 * 60 * 1000; // 5 minutes
+
+    let items: RankingItem[] = [];
+
+    if (this.rankingCaches[cacheKey] && Date.now() - this.rankingCaches[cacheKey].timestamp < cacheDuration) {
+      items = this.rankingCaches[cacheKey].items;
+    } else {
+      logger.info(`Fetching fresh global ranking from WarEra API for ${rankingType}...`);
+      const response = await this.client.request('ranking.getRanking', { rankingType });
+      if (response && response.items) {
+        items = response.items;
+        this.rankingCaches[cacheKey] = { items, timestamp: Date.now() };
+      }
+    }
+
+    if (items.length === 0) return null;
+
+    // Filter strictly to Egypt players
+    const egyptRankings = items.filter(r => r.country === egyptId);
+    
+    // Sort descending by value to ensure accurate ranking
+    egyptRankings.sort((a, b) => b.value - a.value);
+
+    // Find the user's position
+    const rankIndex = egyptRankings.findIndex(r => r.user === userId);
+    
+    if (rankIndex === -1) return null;
+    return rankIndex + 1;
   }
 }
