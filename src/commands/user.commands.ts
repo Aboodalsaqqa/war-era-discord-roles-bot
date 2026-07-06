@@ -169,38 +169,12 @@ export class UserCommands {
     interaction: ChatInputCommandInteraction,
     profile: UserGetUserLiteResponse
   ): Promise<EmbedBuilder> {
-    const guild = interaction.guild;
-    
-    // Check if player is linked in DB
-    const userLink = await this.verificationService.getLinkByWarEraUserId(profile._id);
-
-    // Fetch country name
-    let countryName: string | undefined = undefined;
-    try {
-      const countries = await this.wareraService.getAllCountries();
-      const country = countries.find((c) => c._id === profile.country);
-      if (country) {
-        countryName = country.name;
-      }
-    } catch (err) {
-      logger.warn({ error: (err as Error).message }, 'Failed to fetch country name for profile embed');
-    }
-
     // Fetch MU details
-    let muName: string | undefined = undefined;
-    let muPosition: string | undefined = undefined;
-
+    let muName: string = 'None';
     if (profile.mu) {
       try {
         const mu = await this.wareraService.getMu(profile.mu);
         muName = mu.name;
-        if (profile._id === mu.user) {
-          muPosition = 'Founder / Owner 👑';
-        } else if (mu.roles?.commanders?.includes(profile._id)) {
-          muPosition = 'Commander 🎖️';
-        } else {
-          muPosition = 'Member';
-        }
       } catch (err) {
         logger.warn({ error: (err as Error).message, muId: profile.mu }, 'Failed to fetch MU details for profile embed');
         muName = `ID: ${profile.mu}`;
@@ -224,178 +198,51 @@ export class UserCommands {
       (skills.entrepreneurship?.level || 0) +
       (skills.companies?.level || 0);
 
-    let specialization = '⚖️ Hybrid';
+    let specializationText = '⚖️ Hybrid Specialist';
+    let specializationSubText = '';
+
     if (warScore >= economyScore * 1.5) {
-      specialization = '⚔️ War Specialist';
+      specializationText = '🪖 War Specialist';
+      specializationSubText = '\n*أبو عامر راضي عنك*';
     } else if (economyScore >= warScore * 1.5) {
-      specialization = '🏭 Economy Specialist';
+      specializationText = '🌾 Economy Specialist';
+      specializationSubText = '\n*الاخ بيلعب المزرعة السعيدة*';
     }
 
-    // 1. Identity Fields (Hide fields with no value)
-    const identityFields: string[] = [];
-    identityFields.push(`• **Username:** \`${profile.username}\``);
-    if (profile.leveling?.level !== undefined) {
-      identityFields.push(`• **Level:** \`${profile.leveling.level}\``);
-    }
-    if (countryName) {
-      identityFields.push(`• **Country:** \`${countryName}\``);
-    }
-    if (muName) {
-      identityFields.push(`• **Military Unit (MU):** \`${muName}\``);
-    }
-    if (muPosition) {
-      identityFields.push(`• **MU Position:** \`${muPosition}\``);
-    }
-    identityFields.push(`• **Specialization:** \`${specialization}\``);
-    
-    if (profile.stats?.damagesCount !== undefined) {
-      identityFields.push(`• **Total Damage:** \`${profile.stats.damagesCount.toLocaleString()}\``);
-    }
-    if (profile.rankings?.weeklyUserDamages?.value !== undefined) {
-      identityFields.push(`• **Weekly Damage:** \`${profile.rankings.weeklyUserDamages.value.toLocaleString()}\``);
+    // Prepare variables
+    const level = profile.leveling?.level !== undefined ? profile.leveling.level : '?';
+    const totalDamage = profile.stats?.damagesCount !== undefined ? profile.stats.damagesCount.toLocaleString() : '0';
+    const totalDamageRank = profile.rankings?.userDamages?.rank !== undefined ? `#${profile.rankings.userDamages.rank}` : 'Unranked';
+    const weeklyDamage = profile.rankings?.weeklyUserDamages?.value !== undefined ? profile.rankings.weeklyUserDamages.value.toLocaleString() : '0';
+    const weeklyDamageRank = profile.rankings?.weeklyUserDamages?.rank !== undefined ? `#${profile.rankings.weeklyUserDamages.rank}` : 'Unranked';
+
+    let description = `**👤 ${profile.username}**\n\n`;
+    description += `**⭐ Level:** ${level}\n\n`;
+    description += `**${specializationText}**${specializationSubText}\n\n`;
+    description += `**⚔ Total Damage:** ${totalDamage}\n`;
+    description += `**🇪🇬 Egypt Total Damage Rank:** ${totalDamageRank}\n\n`;
+    description += `**🔥 Weekly Damage:** ${weeklyDamage}\n`;
+    description += `**🇪🇬 Egypt Weekly Damage Rank:** ${weeklyDamageRank}\n\n`;
+    description += `**⭐ Military Unit:** ${muName}`;
+
+    // Special top ranking messages
+    const totalRankNum = profile.rankings?.userDamages?.rank;
+    const weeklyRankNum = profile.rankings?.weeklyUserDamages?.rank;
+
+    const isRank1 = totalRankNum === 1 || weeklyRankNum === 1;
+    const isTop10 = (totalRankNum !== undefined && totalRankNum >= 2 && totalRankNum <= 10) || 
+                    (weeklyRankNum !== undefined && weeklyRankNum >= 2 && weeklyRankNum <= 10);
+
+    if (isRank1) {
+      description += `\n\n**👑 الباشا الكبير**`;
+    } else if (isTop10) {
+      description += `\n\n**💥 اخويا المدرعة الي الضربة منه باربعة**`;
     }
 
     const embed = new EmbedBuilder()
-      .setTitle(`WarEra Player Card | ${profile.username}`)
-      .setColor('#D00000')
+      .setColor('#2b2d31') // Modern dark invisible color for premium feel
       .setThumbnail(profile.avatarUrl || 'https://raw.githubusercontent.com/discord/discord-logo-template/master/discord-logo-blue.png')
-      .addFields({ name: '👤 Identity', value: identityFields.join('\n'), inline: false });
-
-    // 2. Rankings Section (Hide if no rankings exist)
-    const rankingFields: string[] = [];
-    if (profile.rankings?.userLevel?.rank !== undefined) {
-      rankingFields.push(`• **Global Level Rank:** \`#${profile.rankings.userLevel.rank}\` (${profile.rankings.userLevel.tier.toUpperCase()})`);
-    }
-    if (profile.rankings?.userDamages?.rank !== undefined) {
-      rankingFields.push(`• **Total Damage Rank:** \`#${profile.rankings.userDamages.rank}\` (${profile.rankings.userDamages.tier.toUpperCase()})`);
-    }
-    if (profile.rankings?.weeklyUserDamages?.rank !== undefined) {
-      rankingFields.push(`• **Weekly Damage Rank:** \`#${profile.rankings.weeklyUserDamages.rank}\` (${profile.rankings.weeklyUserDamages.tier.toUpperCase()})`);
-    }
-    if (profile.rankings?.userWealth?.rank !== undefined) {
-      rankingFields.push(`• **Wealth Rank:** \`#${profile.rankings.userWealth.rank}\` (${profile.rankings.userWealth.tier.toUpperCase()})`);
-    }
-    if (profile.militaryRank !== undefined) {
-      rankingFields.push(`• **Military Rank Level:** \`Level ${profile.militaryRank}\``);
-    }
-
-    if (rankingFields.length > 0) {
-      embed.addFields({ name: '🏆 Rankings', value: rankingFields.join('\n'), inline: false });
-    }
-
-    // 3. Discord Integration & Military Readiness (only if linked)
-    if (userLink && guild) {
-      const member = await guild.members.fetch({ user: userLink.discordId, force: true }).catch(() => null);
-      
-      let eligibilityRecruitment = 'No';
-      let inclusionOperations = 'No';
-      const botManagedRolesList: string[] = [];
-      const leadershipRolesList: string[] = [];
-
-      if (member) {
-        // Fetch Guild Config
-        const guildConfig = await prisma.guildConfig.findUnique({
-          where: { guildId: guild.id },
-        });
-
-        const hasCitizen = guildConfig && guildConfig.citizenRoleId
-          ? member.roles.cache.has(guildConfig.citizenRoleId)
-          : true;
-        const hasTrusted = guildConfig && guildConfig.trustedRoleId
-          ? member.roles.cache.has(guildConfig.trustedRoleId)
-          : true;
-        const isTrusted = hasCitizen && hasTrusted;
-
-        inclusionOperations = isTrusted ? 'Yes ✅' : 'No ❌';
-        eligibilityRecruitment = (isTrusted && !userLink.exemptFromRecruitment) ? 'Yes ✅' : 'No ❌';
-
-        if (guildConfig) {
-          // Check for Discord leadership roles
-          if (guildConfig.muOwnerRoleId && member.roles.cache.has(guildConfig.muOwnerRoleId)) {
-            leadershipRolesList.push(`<@&${guildConfig.muOwnerRoleId}>`);
-          }
-          if (guildConfig.muCommanderRoleId && member.roles.cache.has(guildConfig.muCommanderRoleId)) {
-            leadershipRolesList.push(`<@&${guildConfig.muCommanderRoleId}>`);
-          }
-
-          // Check standard managed roles
-          [
-            guildConfig.presidentRoleId,
-            guildConfig.vicePresidentRoleId,
-            guildConfig.congressRoleId,
-            guildConfig.warRoleId,
-            guildConfig.economyRoleId,
-            guildConfig.hybridRoleId,
-            guildConfig.muCommanderRoleId,
-            guildConfig.muOwnerRoleId,
-            guildConfig.noMuRoleId,
-          ].forEach((id) => {
-            if (id && member.roles.cache.has(id)) {
-              botManagedRolesList.push(`<@&${id}>`);
-            }
-          });
-
-          // Mu Roles
-          const muRoles = await prisma.muRole.findMany({ where: { guildId: guild.id } });
-          muRoles.forEach((r) => {
-            if (member.roles.cache.has(r.discordRoleId)) {
-              botManagedRolesList.push(`<@&${r.discordRoleId}>`);
-            }
-          });
-
-          // Level Roles
-          const levelRoles = await prisma.levelRole.findMany({ where: { guildId: guild.id } });
-          levelRoles.forEach((r) => {
-            if (member.roles.cache.has(r.discordRoleId)) {
-              botManagedRolesList.push(`<@&${r.discordRoleId}>`);
-            }
-          });
-        }
-      }
-
-      // Add Military Readiness section
-      embed.addFields({
-        name: '🛡️ Military Readiness',
-        value: `• **Eligible for Recruitment:** ${eligibilityRecruitment}\n• **Included in Operations:** ${inclusionOperations}`,
-        inline: false,
-      });
-
-      // Add Discord Integration section
-      const discordFields: string[] = [
-        `• **Discord Member:** <@${userLink.discordId}>`,
-        `• **Linked Since:** <t:${Math.floor(userLink.verifiedAt.getTime() / 1000)}:F>`,
-        `• **Last Sync Time:** <t:${Math.floor(userLink.updatedAt.getTime() / 1000)}:R>`,
-      ];
-
-      // Remove duplicates from botManagedRolesList
-      const uniqueManagedRoles = Array.from(new Set(botManagedRolesList));
-      const rolesVal = uniqueManagedRoles.length > 0 ? uniqueManagedRoles.join(', ') : 'None';
-      discordFields.push(`• **Managed Roles:** ${rolesVal}`);
-
-      embed.addFields({
-        name: '🤖 Discord Integration',
-        value: discordFields.join('\n'),
-        inline: false,
-      });
-
-      // Add MU Leadership roles explicitly if applicable
-      if (leadershipRolesList.length > 0) {
-        embed.addFields({
-          name: '🎖️ MU Leadership Discord Roles',
-          value: leadershipRolesList.join(', '),
-          inline: false,
-        });
-      }
-    } else if (userLink) {
-      // Linked but not in this guild
-      embed.addFields({
-        name: '🤖 Discord Integration',
-        value: `• **Discord User ID:** \`${userLink.discordId}\`\n• **Linked Since:** <t:${Math.floor(userLink.verifiedAt.getTime() / 1000)}:F>\n• **Status:** *Not a member of this server*`,
-        inline: false,
-      });
-    } else {
-      embed.setFooter({ text: 'Egypt WarEra Integration | Player is not linked to Discord' });
-    }
+      .setDescription(description);
 
     return embed;
   }
