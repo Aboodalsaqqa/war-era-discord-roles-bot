@@ -143,12 +143,36 @@ export class RoleSyncService {
           }
         }
 
-        // --- MU Roles ---
+        // --- MU Roles (Active Membership) ---
         if (profile.mu) {
           const muMapping = muRoles.find(m => m.muId === profile.mu);
           if (muMapping) {
             targetRoleIds.add(muMapping.discordRoleId);
           }
+        }
+
+        // --- MU Roles (Ownership) ---
+        // Additionally assign Discord roles for every MU the player owns.
+        // Uses Set (targetRoleIds) for natural deduplication if active MU == owned MU.
+        try {
+          const ownedMus = await this.wareraService.getOwnedMus(profile._id);
+          if (ownedMus.length > 0) {
+            logger.info(
+              { ...logCtx, ownedMuCount: ownedMus.length, ownedMuNames: ownedMus.map(mu => mu.name) },
+              `Player owns ${ownedMus.length} MU(s)`
+            );
+            for (const ownedMu of ownedMus) {
+              const muMapping = muRoles.find(m => m.muId === ownedMu._id);
+              if (muMapping) {
+                targetRoleIds.add(muMapping.discordRoleId);
+              }
+            }
+          }
+        } catch (ownedMuErr) {
+          logger.error(
+            { ...logCtx, error: (ownedMuErr as Error).message },
+            'Failed to fetch owned MUs, continuing with active MU only'
+          );
         }
 
         // --- Level Roles ---
