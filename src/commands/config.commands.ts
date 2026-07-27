@@ -40,10 +40,7 @@ export class ConfigCommands {
           field = 'officerRoleId';
           fieldLabel = '🛡️ Officer';
           break;
-        case 'president-role':
-          field = 'presidentRoleId';
-          fieldLabel = '👑 Country President';
-          break;
+
         case 'vice-president-role':
           field = 'vicePresidentRoleId';
           fieldLabel = '🎖️ Vice President';

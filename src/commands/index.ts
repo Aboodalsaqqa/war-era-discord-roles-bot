@@ -7,6 +7,7 @@ import { OperationCommands } from './operation.commands';
 import { ReadinessCommands } from './readiness.commands';
 import { VerificationManagementCommands } from './verificationManagement.commands';
 import { AuditCommands } from './audit.commands';
+import { OptimizeCommands } from './optimize.commands';
 import { logger } from '../utils/logger';
 
 // Slash commands definition mapping
@@ -126,19 +127,7 @@ export const getSlashCommandsDefinition = () => [
           },
         ],
       },
-      {
-        type: ApplicationCommandOptionType.Subcommand,
-        name: 'president-role',
-        description: 'Set the Country President role',
-        options: [
-          {
-            type: ApplicationCommandOptionType.Role,
-            name: 'role',
-            description: 'The Discord role to assign for the president',
-            required: true,
-          },
-        ],
-      },
+
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'vice-president-role',
@@ -510,6 +499,30 @@ export const getSlashCommandsDefinition = () => [
     description: 'Audit every Egyptian Military Unit against Discord role mappings (Admin only)',
     default_member_permissions: PermissionFlagsBits.Administrator.toString(),
   },
+  {
+    name: 'optimize',
+    description: 'Run the WarEra Build Optimizer to find the best gear setup',
+    options: [
+      {
+        type: ApplicationCommandOptionType.String,
+        name: 'username',
+        description: 'Your WarEra username',
+        required: true,
+      },
+      {
+        type: ApplicationCommandOptionType.String,
+        name: 'mode',
+        description: 'Optimization Mode (e.g. maxDamage, sustainable, profit, warEco)',
+        required: true,
+        choices: [
+          { name: 'Maximum Damage', value: 'maxDamage' },
+          { name: 'Sustainable Daily', value: 'sustainable' },
+          { name: 'War/Economy Balance', value: 'warEco' },
+          { name: 'Pure Profit', value: 'profit' },
+        ],
+      },
+    ],
+  },
 ];
 
 export class CommandRouter {
@@ -521,7 +534,8 @@ export class CommandRouter {
     private readonly operationCommands: OperationCommands,
     private readonly readinessCommands: ReadinessCommands,
     private readonly verificationManagementCommands: VerificationManagementCommands,
-    private readonly auditCommands: AuditCommands
+    private readonly auditCommands: AuditCommands,
+    private readonly optimizeCommands: OptimizeCommands
   ) {}
 
   async handleInteraction(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -577,6 +591,9 @@ export class CommandRouter {
           break;
         case 'mu-audit':
           await this.auditCommands.muAudit(interaction);
+          break;
+        case 'optimize':
+          await this.optimizeCommands.handleOptimize(interaction);
           break;
         default:
           logger.warn({ commandName }, 'Received unhandled command name');
