@@ -154,9 +154,11 @@ export class RoleSyncService {
         // --- MU Roles (Ownership) ---
         // Additionally assign Discord roles for every MU the player owns.
         // Uses Set (targetRoleIds) for natural deduplication if active MU == owned MU.
+        let isAnyMuOwner = false;
         try {
           const ownedMus = await this.wareraService.getOwnedMus(profile._id);
           if (ownedMus.length > 0) {
+            isAnyMuOwner = true;
             logger.info(
               { ...logCtx, ownedMuCount: ownedMus.length, ownedMuNames: ownedMus.map(mu => mu.name) },
               `Player owns ${ownedMus.length} MU(s)`
@@ -217,24 +219,31 @@ export class RoleSyncService {
         }
 
         // --- MU Leadership & No MU Roles ---
+        
+        // 1. Global Ownership Check
+        // If the player owns ANY Military Unit, they receive both the Owner and Commander roles.
+        if (isAnyMuOwner) {
+          if (config.muOwnerRoleId) targetRoleIds.add(config.muOwnerRoleId);
+          if (config.muCommanderRoleId) targetRoleIds.add(config.muCommanderRoleId);
+        }
+
+        // 2. Active MU Check (for non-owners who might be Commanders in their active MU)
         if (profile.mu) {
           try {
             const muDetails = await this.wareraService.getMu(profile.mu);
-            const isOwner = profile._id === muDetails.user;
             const isCommander = muDetails.roles?.commanders?.includes(profile._id) || false;
 
-            if (isOwner && config.muOwnerRoleId) {
-              targetRoleIds.add(config.muOwnerRoleId);
-            } else if (isCommander && config.muCommanderRoleId) {
+            if (isCommander && config.muCommanderRoleId) {
               targetRoleIds.add(config.muCommanderRoleId);
             }
           } catch (muErr) {
             logger.error(
               { ...logCtx, muId: profile.mu, error: (muErr as Error).message },
-              'Failed to fetch MU details for commander/owner check during role sync'
+              'Failed to fetch MU details for commander check during role sync'
             );
           }
         } else {
+          // If they are not actively in ANY Military Unit
           if (config.noMuRoleId) {
             targetRoleIds.add(config.noMuRoleId);
           }
