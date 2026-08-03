@@ -242,7 +242,7 @@ export class UserCommands {
 
     let activeMuText = muName;
     if (profile.mu === '69ced3d6c23c7a8448383f28') {
-      activeMuText += '\n↳ 🏴 تحت حماية الرايات السوداء.';
+      activeMuText += '\n\u200F🏴 تحت حماية الرايات السوداء.';
     }
 
     const embed = new EmbedBuilder()
