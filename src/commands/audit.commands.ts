@@ -101,9 +101,9 @@ export class AuditCommands {
           `**Mapped Roles Found:** ${configuredCount}\n` +
           `**Broken Roles:** ${brokenMappings.length}\n` +
           `**Missing Roles:** ${missingCount}\n` +
-          `**Duplicate Mappings:** ${duplicateMappings.length}\n` +
           `**Orphan Mappings:** ${orphanMappings.length}`
-        );
+        )
+        .setFooter({ text: 'Egypt Roles Bot • Developed by El-Gaiiar' });
 
       if (missingMus.length > 0) {
         const missingList = missingMus.map((m) => `❌ **${m.name}**\n\`/mu-role add mu-id:${m.id} role:\``).join('\n\n');
@@ -153,7 +153,8 @@ export class AuditCommands {
           const detailEmbed = new EmbedBuilder()
             .setTitle(`📋 MU Details (Part ${detailPageCount})`)
             .setColor('#2F3136')
-            .setDescription(currentPageDetailText);
+            .setDescription(currentPageDetailText)
+            .setFooter({ text: 'Egypt Roles Bot • Developed by El-Gaiiar' });
           
           embeds.push(detailEmbed);
           currentPageDetailText = '';

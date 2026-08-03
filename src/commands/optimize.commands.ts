@@ -68,7 +68,7 @@ export class OptimizeCommands {
           { name: '🔧 Repair Cost', value: `$${bestBuild.result.combat.repairCost.toLocaleString()}`, inline: true },
           { name: 'Gear Setup', value: bestBuild.gearSet.map((g: any) => `- **${g.slot}**: ${g.tier} (Id: ${g.id})`).join('\n') }
         )
-        .setFooter({ text: 'WarEra Build Optimizer' })
+        .setFooter({ text: 'Egypt Roles Bot • Developed by El-Gaiiar' })
         .setTimestamp();
 
       await interaction.editReply({ embeds: [embed] });

@@ -96,7 +96,7 @@ export class VerificationManagementCommands {
         .setTitle('✅ Verified Users List')
         .setColor('#D00000')
         .setDescription(`**Stats Overview:**\n• Total Verified: **${totalCount}**\n• Trusted: **${trusted.length}**\n• Untrusted: **${untrusted.length}**`)
-        .setFooter({ text: `Page ${page + 1} of ${totalPages} • Filter: ${filterTrusted !== null ? (filterTrusted ? 'Trusted Only' : 'Untrusted Only') : 'None'}` });
+        .setFooter({ text: `Egypt Roles Bot • Developed by El-Gaiiar | Page ${page + 1} of ${totalPages} • Filter: ${filterTrusted !== null ? (filterTrusted ? 'Trusted Only' : 'Untrusted Only') : 'None'}` });
 
       if (pageData.length === 0) {
         embed.addFields({ name: 'No users found', value: 'There are no users matching this filter.' });

@@ -126,7 +126,8 @@ export class ConfigCommands {
               .map((m) => `• **${m.muName}** (ID: \`${m.muId}\`) ➡️ <@&${m.discordRoleId}>`)
               .join('\n')
           )
-          .setTimestamp();
+          .setTimestamp()
+          .setFooter({ text: 'Egypt Roles Bot • Developed by El-Gaiiar' });
 
         await interaction.editReply({ embeds: [embed] });
       } catch (error) {
@@ -200,7 +201,8 @@ export class ConfigCommands {
               .map((m) => `• **Level ${m.minimumLevel}+** ➡️ <@&${m.discordRoleId}>`)
               .join('\n')
           )
-          .setTimestamp();
+          .setTimestamp()
+          .setFooter({ text: 'Egypt Roles Bot • Developed by El-Gaiiar' });
 
         await interaction.editReply({ embeds: [embed] });
       } catch (error) {

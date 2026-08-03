@@ -129,7 +129,8 @@ export class OperationCommands {
               })
               .join('\n\n')
           )
-          .setTimestamp();
+          .setTimestamp()
+          .setFooter({ text: 'Egypt Roles Bot • Developed by El-Gaiiar' });
 
         await interaction.editReply({ embeds: [embed] });
       } catch (err) {
@@ -164,7 +165,8 @@ export class OperationCommands {
             { name: '⏳ No Response', value: `${stats.noResponseCount}`, inline: true },
             { name: '📊 Response Rate', value: `${stats.responseRate.toFixed(1)}%`, inline: true }
           )
-          .setTimestamp();
+          .setTimestamp()
+          .setFooter({ text: 'Egypt Roles Bot • Developed by El-Gaiiar' });
 
         await interaction.editReply({ embeds: [embed] });
       } catch (err) {

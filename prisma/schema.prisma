@@ -96,3 +96,295 @@ model OperationResponse {
 
   @@unique([operationId, discordId])
 }
+
+// ═══════════════════════════════════════════════════════════
+// MISR HQ — NEW MODELS (Additive to existing schema)
+// These models power the web-based Military Unit Command Center.
+// They do NOT modify any existing models above.
+// ═══════════════════════════════════════════════════════════
+
+// ── Member Snapshots (Historical Tracking) ──────────────
+model MemberSnapshot {
+  id              String   @id @default(uuid())
+  wareraUserId    String
+  snapshotDate    DateTime @default(now())
+
+  // Player State
+  level           Int
+  militaryRank    Int
+  specialization  String   // "war" | "economy" | "hybrid"
+  country         String
+  muId            String?
+
+  // Skills (denormalized for fast queries)
+  attackLevel     Int      @default(0)
+  precisionLevel  Int      @default(0)
+  critChanceLevel Int      @default(0)
+  critDamageLevel Int      @default(0)
+  armorLevel      Int      @default(0)
+  dodgeLevel      Int      @default(0)
+  lootChanceLevel Int      @default(0)
+  productionLevel Int      @default(0)
+  managementLevel Int      @default(0)
+  entrepreneurLevel Int    @default(0)
+  companiesLevel  Int      @default(0)
+
+  // Rankings
+  totalDamage     Float    @default(0)
+  weeklyDamage    Float    @default(0)
+
+  // Computed Performance Score (0-100)
+  performanceScore Float   @default(0)
+
+  createdAt       DateTime @default(now())
+
+  @@unique([wareraUserId, snapshotDate])
+  @@index([wareraUserId])
+  @@index([snapshotDate])
+  @@index([muId])
+}
+
+// ── Equipment Snapshots ─────────────────────────────────
+model EquipmentSnapshot {
+  id              String   @id @default(uuid())
+  wareraUserId    String
+  snapshotDate    DateTime @default(now())
+
+  // Equipment slots
+  weaponCode      String?
+  weaponTier      String?
+  weaponState     Int?
+  weaponMaxState  Int?
+
+  helmetCode      String?
+  helmetTier      String?
+  helmetState     Int?
+  helmetMaxState  Int?
+
+  chestCode       String?
+  chestTier       String?
+  chestState      Int?
+  chestMaxState   Int?
+
+  pantsCode       String?
+  pantsTier       String?
+  pantsState      Int?
+  pantsMaxState   Int?
+
+  glovesCode      String?
+  glovesTier      String?
+  glovesState     Int?
+  glovesMaxState  Int?
+
+  bootsCode       String?
+  bootsTier       String?
+  bootsState      Int?
+  bootsMaxState   Int?
+
+  ammoType        String?
+
+  // Computed compliance score (0-100)
+  complianceScore Float    @default(0)
+
+  createdAt       DateTime @default(now())
+
+  @@unique([wareraUserId, snapshotDate])
+  @@index([wareraUserId])
+}
+
+// ── Battle Participation ────────────────────────────────
+model BattleParticipation {
+  id              String   @id @default(uuid())
+  wareraUserId    String
+  battleId        String
+  roundId         String?
+
+  side            String   // "attacker" | "defender"
+  damage          Float
+  hitCount        Int
+  isCritical      Boolean  @default(false)
+
+  // Battle context
+  attackerCountry String
+  defenderCountry String
+  battleType      String   // "war" | "resistance"
+
+  recordedAt      DateTime @default(now())
+
+  @@unique([wareraUserId, battleId])
+  @@index([wareraUserId])
+  @@index([battleId])
+  @@index([recordedAt])
+}
+
+// ── Attendance Records ──────────────────────────────────
+model AttendanceRecord {
+  id              String   @id @default(uuid())
+  wareraUserId    String
+  date            DateTime
+
+  wasOnline       Boolean  @default(false)
+  foughtInBattle  Boolean  @default(false)
+  battleCount     Int      @default(0)
+  totalDamage     Float    @default(0)
+
+  createdAt       DateTime @default(now())
+
+  @@unique([wareraUserId, date])
+  @@index([wareraUserId])
+  @@index([date])
+}
+
+// ── Member Notes & Warnings ─────────────────────────────
+model MemberNote {
+  id              String   @id @default(uuid())
+  wareraUserId    String
+  authorDiscordId String
+
+  type            String   // "note" | "warning" | "commendation" | "promotion" | "demotion"
+  title           String
+  content         String
+  severity        Int      @default(0) // 0=info, 1=minor, 2=major, 3=critical
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([wareraUserId])
+  @@index([authorDiscordId])
+}
+
+// ── Achievement Definitions ─────────────────────────────
+model Achievement {
+  id              String   @id @default(uuid())
+  code            String   @unique
+  name            String
+  description     String
+  icon            String
+  category        String   // "combat" | "attendance" | "growth" | "leadership" | "economy"
+  tier            String   // "bronze" | "silver" | "gold" | "platinum" | "diamond"
+
+  // Criteria (JSON string) - flexible rule engine
+  criteria        String
+
+  createdAt       DateTime @default(now())
+}
+
+// ── Earned Achievements ─────────────────────────────────
+model MemberAchievement {
+  id              String   @id @default(uuid())
+  wareraUserId    String
+  achievementId   String
+
+  earnedAt        DateTime @default(now())
+
+  @@unique([wareraUserId, achievementId])
+  @@index([wareraUserId])
+}
+
+// ── Equipment Requirements (Commander-defined) ──────────
+model EquipmentRequirement {
+  id              String   @id @default(uuid())
+  guildId         String
+  muId            String?
+
+  name            String
+  description     String?
+
+  minWeaponTier   String?
+  minHelmetTier   String?
+  minChestTier    String?
+  minPantsTier    String?
+  minGlovesTier   String?
+  minBootsTier    String?
+  requireAmmo     Boolean  @default(false)
+
+  isActive        Boolean  @default(true)
+  createdBy       String
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([guildId])
+  @@index([muId])
+}
+
+// ── AI Report Archive ───────────────────────────────────
+model AIReport {
+  id              String   @id @default(uuid())
+  guildId         String
+  type            String   // "weekly_summary" | "anomaly_alert" | "performance_review"
+  title           String
+  content         String
+
+  periodStart     DateTime?
+  periodEnd       DateTime?
+
+  generatedAt     DateTime @default(now())
+
+  @@index([guildId])
+  @@index([type])
+  @@index([generatedAt])
+}
+
+// ── Market Price History ────────────────────────────────
+model MarketPriceSnapshot {
+  id              String   @id @default(uuid())
+  snapshotDate    DateTime @default(now())
+
+  ammo            Float    @default(0)
+  bread           Float    @default(0)
+  steak           Float    @default(0)
+  cookedFish      Float    @default(0)
+  cocain          Float    @default(0)
+  iron            Float    @default(0)
+  lead            Float    @default(0)
+  limestone       Float    @default(0)
+  steel           Float    @default(0)
+  concrete        Float    @default(0)
+  oil             Float    @default(0)
+  lightAmmo       Float    @default(0)
+  heavyAmmo       Float    @default(0)
+  scraps          Float    @default(0)
+  case1           Float    @default(0)
+  case2           Float    @default(0)
+
+  @@unique([snapshotDate])
+  @@index([snapshotDate])
+}
+
+// ── Dashboard Sessions (OAuth) ──────────────────────────
+model DashboardSession {
+  id              String   @id @default(uuid())
+  discordId       String
+  accessToken     String
+  refreshToken    String?
+  expiresAt       DateTime
+
+  discordUsername  String
+  discordAvatar   String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([discordId])
+  @@index([discordId])
+}
+
+// ── MU Configuration (Dashboard-specific settings) ──────
+model MuDashboardConfig {
+  id              String   @id @default(uuid())
+  guildId         String
+  muId            String
+
+  displayName     String?
+  bannerUrl       String?
+  accentColor     String?
+
+  aiReportsEnabled Boolean @default(true)
+  weeklyDigest     Boolean @default(true)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([guildId, muId])
+}

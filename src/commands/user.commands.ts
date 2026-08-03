@@ -224,12 +224,13 @@ export class UserCommands {
 
     if (warScore >= economyScore * 1.5) {
       specializationText = '🪖 War Specialist';
-      specializationSubText = '\n*أبو عامر راضي عنك*';
+      specializationSubText = '\n*🇪🇬 مصر فرحانة بيك.*';
     } else if (economyScore >= warScore * 1.5) {
       specializationText = '🌾 Economy Specialist';
       specializationSubText = '\n*الاخ بيلعب المزرعة السعيدة*';
     }
 
+    // Prepare variables
     // Prepare variables
     const level = profile.leveling?.level !== undefined ? profile.leveling.level : '?';
     const totalDamage = profile.stats?.damagesCount !== undefined ? profile.stats.damagesCount.toLocaleString() : '0';
@@ -237,16 +238,19 @@ export class UserCommands {
     const weeklyDamage = profile.rankings?.weeklyUserDamages?.value !== undefined ? profile.rankings.weeklyUserDamages.value.toLocaleString() : '0';
     const weeklyDamageRank = weeklyRankNum ? `#${weeklyRankNum}` : 'Unranked';
 
+    const badgeText = profile._id === '6933026bcb40c06497f414f3' ? '\n\n**☝️ القدوة**' : '';
+
     const embed = new EmbedBuilder()
       .setColor('#2b2d31') // Modern dark invisible color for premium feel
       .setThumbnail(profile.avatarUrl || 'https://raw.githubusercontent.com/discord/discord-logo-template/master/discord-logo-blue.png')
-      .setDescription(`**👤 ${profile.username}**\n**⭐ Level:** ${level}\n\n**${specializationText}**${specializationSubText}`)
+      .setDescription(`**👤 ${profile.username}**${badgeText}\n**⭐ Level:** ${level}\n\n**${specializationText}**${specializationSubText}`)
       .addFields(
         { name: '⚔ Total Damage', value: `${totalDamage}\n🇪🇬 Egypt Rank: **${totalDamageRank}**`, inline: true },
         { name: '🔥 Weekly Damage', value: `${weeklyDamage}\n🇪🇬 Egypt Rank: **${weeklyDamageRank}**`, inline: true },
         { name: '\u200B', value: '\u200B', inline: true }, // Empty field for alignment
         { name: '🏛 Current Active MU', value: muName, inline: false }
-      );
+      )
+      .setFooter({ text: 'Egypt Roles Bot • Developed by El-Gaiiar' });
 
     if (ownedMusList) {
       embed.addFields({ name: '👑 Owned Military Units', value: ownedMusList, inline: false });

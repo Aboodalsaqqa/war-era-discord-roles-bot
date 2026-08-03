@@ -127,7 +127,7 @@ export class RecruitmentCommands {
             { name: 'Converted (War Spec)', value: `${stats.convertedCount}`, inline: true },
             { name: 'Remaining (Economy/Hybrid)', value: `${stats.remainingCount}`, inline: true }
           )
-          .setFooter({ text: 'Egypt MoD Campaign Status' })
+          .setFooter({ text: 'Egypt Roles Bot • Developed by El-Gaiiar' })
           .setTimestamp();
 
         await interaction.editReply({ embeds: [embed] });
@@ -153,7 +153,8 @@ export class RecruitmentCommands {
             { name: 'Remaining Players', value: `${report.remainingCount}`, inline: true },
             { name: 'Overall Conversion Rate', value: `${report.conversionRate.toFixed(1)}%`, inline: false }
           )
-          .setTimestamp();
+          .setTimestamp()
+          .setFooter({ text: 'Egypt Roles Bot • Developed by El-Gaiiar' });
 
         // Add MU Breakdown fields
         if (report.muBreakdown.length > 0) {

@@ -68,7 +68,7 @@ export class ReadinessCommands {
           }
         )
         .setTimestamp()
-        .setFooter({ text: 'Egypt Ministry of Defense Readiness Report' });
+        .setFooter({ text: 'Egypt Roles Bot • Developed by El-Gaiiar' });
 
       // Add Active Recruitment Campaign if present
       if (report.activeCampaignTitle) {
