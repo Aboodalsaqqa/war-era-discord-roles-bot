@@ -238,17 +238,22 @@ export class UserCommands {
     const weeklyDamage = profile.rankings?.weeklyUserDamages?.value !== undefined ? profile.rankings.weeklyUserDamages.value.toLocaleString() : '0';
     const weeklyDamageRank = weeklyRankNum ? `#${weeklyRankNum}` : 'Unranked';
 
-    const badgeText = profile._id === '6933026bcb40c06497f414f3' ? '\n\n**☝️ القدوة**' : '';
+    const badgeText = profile._id === '6933026bcb40c06497f414f3' ? ' • ☝️ القدوة' : '';
+
+    let activeMuText = muName;
+    if (profile.mu === '69ced3d6c23c7a8448383f28') {
+      activeMuText += '\n↳ 🏴 تحت حماية الرايات السوداء.';
+    }
 
     const embed = new EmbedBuilder()
       .setColor('#2b2d31') // Modern dark invisible color for premium feel
       .setThumbnail(profile.avatarUrl || 'https://raw.githubusercontent.com/discord/discord-logo-template/master/discord-logo-blue.png')
-      .setDescription(`**👤 ${profile.username}**${badgeText}\n**⭐ Level:** ${level}\n\n**${specializationText}**${specializationSubText}`)
+      .setDescription(`**👤 ${profile.username}${badgeText}**\n**⭐ Level:** ${level}\n\n**${specializationText}**${specializationSubText}`)
       .addFields(
         { name: '⚔ Total Damage', value: `${totalDamage}\n🇪🇬 Egypt Rank: **${totalDamageRank}**`, inline: true },
         { name: '🔥 Weekly Damage', value: `${weeklyDamage}\n🇪🇬 Egypt Rank: **${weeklyDamageRank}**`, inline: true },
         { name: '\u200B', value: '\u200B', inline: true }, // Empty field for alignment
-        { name: '🏛 Current Active MU', value: muName, inline: false }
+        { name: '🏛 Current Active MU', value: activeMuText, inline: false }
       )
       .setFooter({ text: 'Egypt Roles Bot • Developed by El-Gaiiar' });
 
