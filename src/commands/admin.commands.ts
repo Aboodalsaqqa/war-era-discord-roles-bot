@@ -5,6 +5,7 @@ import {
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
   ComponentType,
+  PermissionFlagsBits,
 } from 'discord.js';
 import { VerificationService } from '../services/verification.service';
 import { RoleSyncService, EDUCATION_LVL_1_ROLE_ID, EDUCATION_LVL_2_ROLE_ID } from '../services/roleSync.service';
@@ -13,6 +14,9 @@ import { MuRoleRepository } from '../repositories/muRole.repository';
 import { LevelRoleRepository } from '../repositories/levelRole.repository';
 import { UserLinkRepository } from '../repositories/userLink.repository';
 import { logger } from '../utils/logger';
+
+export const FORCE_VERIFY_MODERATOR_ROLE_ID = '1500579625405780129';
+export const FORCE_VERIFY_EDUCATION_STAFF_ROLE_ID = '1477944138887331882';
 
 export class AdminCommands {
   constructor(
@@ -23,6 +27,37 @@ export class AdminCommands {
     private readonly muRoleRepo: MuRoleRepository,
     private readonly levelRoleRepo: LevelRoleRepository
   ) {}
+
+  /**
+   * Checks if user is authorized to run forceverify (Admin, Moderator, or Education Staff)
+   */
+  private async isForceVerifyAuthorized(interaction: ChatInputCommandInteraction): Promise<boolean> {
+    const guild = interaction.guild;
+    if (!guild) return false;
+
+    const member = interaction.member instanceof GuildMember
+      ? interaction.member
+      : await guild.members.fetch(interaction.user.id).catch(() => null);
+
+    if (!member) return false;
+
+    // 1. Administrator
+    if (member.permissions.has(PermissionFlagsBits.Administrator)) {
+      return true;
+    }
+
+    // 2. Moderator role
+    if (member.roles.cache.has(FORCE_VERIFY_MODERATOR_ROLE_ID)) {
+      return true;
+    }
+
+    // 3. Education Staff role
+    if (member.roles.cache.has(FORCE_VERIFY_EDUCATION_STAFF_ROLE_ID)) {
+      return true;
+    }
+
+    return false;
+  }
 
   /**
    * Handler for /forceverify <user> <username>
@@ -37,7 +72,16 @@ export class AdminCommands {
       return;
     }
 
-    logger.info({ adminId: interaction.user.id, targetId: targetUser.id, username }, 'Admin /forceverify triggered');
+    const isAuthorized = await this.isForceVerifyAuthorized(interaction);
+    if (!isAuthorized) {
+      await interaction.reply({
+        content: '❌ You do not have permission to use `/forceverify`. Only Administrators, Moderators, or Education Staff may use this command.',
+        ephemeral: true,
+      });
+      return;
+    }
+
+    logger.info({ invokerId: interaction.user.id, targetId: targetUser.id, username }, '/forceverify triggered');
     await interaction.deferReply({ ephemeral: true });
 
     try {

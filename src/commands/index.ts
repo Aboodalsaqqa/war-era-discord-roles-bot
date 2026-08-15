@@ -48,8 +48,7 @@ export const getSlashCommandsDefinition = () => [
   },
   {
     name: 'forceverify',
-    description: 'Force link a Discord user to a WarEra profile (Admin only)',
-    default_member_permissions: PermissionFlagsBits.Administrator.toString(),
+    description: 'Force link a Discord user to a WarEra profile (Staff only)',
     options: [
       {
         type: ApplicationCommandOptionType.User,
