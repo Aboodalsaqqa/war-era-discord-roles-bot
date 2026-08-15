@@ -256,14 +256,15 @@ export class RoleSyncService {
           }
         }
 
-        // --- Education Roles ---
-        // Rule 1: Education LVL 1 is assigned to anyone (no level or company requirements)
-        targetRoleIds.add(EDUCATION_LVL_1_ROLE_ID);
-
-        // Rule 2: Education LVL 2 requires:
+        // --- Education Roles (Mutually Exclusive) ---
+        // Rule: A player qualifies for Education LVL 2 ONLY if:
         // - WarEra level >= 15
         // - At least 4 separate companies
         // - At least 4 of those companies are Level 4 or higher (automatedEngine >= 4)
+        // If they qualify for Education LVL 2 -> assign Education LVL 2 ONLY (LVL 1 removed).
+        // Otherwise -> assign Education LVL 1 ONLY (LVL 2 removed).
+        let qualifiesEducationLvl2 = false;
+
         if (userLevel >= 15) {
           try {
             const companies = await this.wareraService.getUserCompanies(profile._id);
@@ -275,7 +276,7 @@ export class RoleSyncService {
               }).length;
 
               if (level4OrHigherCount >= 4) {
-                targetRoleIds.add(EDUCATION_LVL_2_ROLE_ID);
+                qualifiesEducationLvl2 = true;
                 logger.info(
                   { ...logCtx, totalCompanies: companies.length, level4OrHigherCount },
                   'Player qualifies for Education LVL 2'
@@ -288,6 +289,12 @@ export class RoleSyncService {
               'Failed to evaluate Education LVL 2 requirements'
             );
           }
+        }
+
+        if (qualifiesEducationLvl2) {
+          targetRoleIds.add(EDUCATION_LVL_2_ROLE_ID);
+        } else {
+          targetRoleIds.add(EDUCATION_LVL_1_ROLE_ID);
         }
 
         // Recruitment Completion Detection: transition to War Specialist
