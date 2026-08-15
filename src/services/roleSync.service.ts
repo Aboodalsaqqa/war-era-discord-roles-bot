@@ -9,6 +9,9 @@ import { logger } from '../utils/logger';
 import { prisma } from '../database';
 import { syncMemberNickname } from './nicknameSync.service';
 
+export const EDUCATION_LVL_1_ROLE_ID = '1525835773230710864';
+export const EDUCATION_LVL_2_ROLE_ID = '1525836096351768616';
+
 export class RoleSyncService {
   constructor(
     private readonly guildConfigRepo: GuildConfigRepository,
@@ -91,6 +94,10 @@ export class RoleSyncService {
       [config.muCommanderRoleId, config.muOwnerRoleId, config.noMuRoleId].forEach(id => {
         if (id) managedRoleIds.add(id);
       });
+
+      // Education roles
+      managedRoleIds.add(EDUCATION_LVL_1_ROLE_ID);
+      managedRoleIds.add(EDUCATION_LVL_2_ROLE_ID);
 
       // ===== DEBUG: Citizen/Trusted Role Check =====
       const memberRoleIds = Array.from(member.roles.cache.keys());
@@ -246,6 +253,40 @@ export class RoleSyncService {
           // If they are not actively in ANY Military Unit
           if (config.noMuRoleId) {
             targetRoleIds.add(config.noMuRoleId);
+          }
+        }
+
+        // --- Education Roles ---
+        // Rule 1: Education LVL 1 is assigned to anyone (no level or company requirements)
+        targetRoleIds.add(EDUCATION_LVL_1_ROLE_ID);
+
+        // Rule 2: Education LVL 2 requires:
+        // - WarEra level >= 15
+        // - At least 4 separate companies
+        // - At least 4 of those companies are Level 4 or higher (automatedEngine >= 4)
+        if (userLevel >= 15) {
+          try {
+            const companies = await this.wareraService.getUserCompanies(profile._id);
+            if (companies.length >= 4) {
+              const level4OrHigherCount = companies.filter((c) => {
+                const engineLevel = c.activeUpgradeLevels?.automatedEngine || 0;
+                const companyLevel = (c as any).level || 0;
+                return Math.max(engineLevel, companyLevel) >= 4;
+              }).length;
+
+              if (level4OrHigherCount >= 4) {
+                targetRoleIds.add(EDUCATION_LVL_2_ROLE_ID);
+                logger.info(
+                  { ...logCtx, totalCompanies: companies.length, level4OrHigherCount },
+                  'Player qualifies for Education LVL 2'
+                );
+              }
+            }
+          } catch (eduErr) {
+            logger.error(
+              { ...logCtx, error: (eduErr as Error).message },
+              'Failed to evaluate Education LVL 2 requirements'
+            );
           }
         }
 

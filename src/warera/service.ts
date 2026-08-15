@@ -7,6 +7,8 @@ import {
   MuListItem,
   MuGetManyPaginatedResponse,
   RankingItem,
+  CompanyGetByIdResponse,
+  CompanyGetCompaniesResponse,
 } from '../types/Responses';
 import { logger } from '../utils/logger';
 
@@ -201,5 +203,51 @@ export class WarEraService {
     
     if (rankIndex === -1) return null;
     return rankIndex + 1;
+  }
+
+  /**
+   * Fetches all companies owned by a specific user with full details
+   */
+  async getUserCompanies(userId: string): Promise<CompanyGetByIdResponse[]> {
+    let allCompanyIds: string[] = [];
+    let nextCursor: string | undefined = undefined;
+
+    while (true) {
+      const response: CompanyGetCompaniesResponse = await this.client.request('company.getCompanies', {
+        userId,
+        perPage: 100,
+        cursor: nextCursor,
+      });
+
+      if (response.items && response.items.length > 0) {
+        for (const item of response.items) {
+          const id = typeof item === 'string' ? item : (item as any)._id;
+          if (id) allCompanyIds.push(id);
+        }
+      }
+
+      if (response.nextCursor) {
+        nextCursor = response.nextCursor;
+      } else {
+        break;
+      }
+    }
+
+    if (allCompanyIds.length === 0) {
+      return [];
+    }
+
+    const companyDetails = await Promise.all(
+      allCompanyIds.map(async (companyId) => {
+        try {
+          return await this.client.request('company.getById', { companyId });
+        } catch (error) {
+          logger.warn({ companyId, error: (error as Error).message }, 'Failed to fetch company details');
+          return null;
+        }
+      })
+    );
+
+    return companyDetails.filter((c): c is CompanyGetByIdResponse => c !== null);
   }
 }
