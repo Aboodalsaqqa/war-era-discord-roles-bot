@@ -17,6 +17,7 @@ import { logger } from '../utils/logger';
 
 export const FORCE_VERIFY_MODERATOR_ROLE_ID = '1500579625405780129';
 export const FORCE_VERIFY_EDUCATION_STAFF_ROLE_ID = '1477944138887331882';
+export const FORCE_VERIFY_AUTHORIZED_ROLE_ID = '1496865174920101970';
 
 export class AdminCommands {
   constructor(
@@ -29,7 +30,7 @@ export class AdminCommands {
   ) {}
 
   /**
-   * Checks if user is authorized to run forceverify (Admin, Moderator, or Education Staff)
+   * Checks if user is authorized to run forceverify (Admin, Moderator, Education Staff, or Authorized Role)
    */
   private async isForceVerifyAuthorized(interaction: ChatInputCommandInteraction): Promise<boolean> {
     const guild = interaction.guild;
@@ -53,6 +54,11 @@ export class AdminCommands {
 
     // 3. Education Staff role
     if (member.roles.cache.has(FORCE_VERIFY_EDUCATION_STAFF_ROLE_ID)) {
+      return true;
+    }
+
+    // 4. Additional Authorized role
+    if (member.roles.cache.has(FORCE_VERIFY_AUTHORIZED_ROLE_ID)) {
       return true;
     }
 
