@@ -41,6 +41,8 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 
 # Environment configurations
 ENV NODE_ENV=production
+ENV PORT=10000
+EXPOSE 10000
 
 # Command to run database migrations and start the bot
 CMD ["sh", "-c", "npx prisma db push --accept-data-loss && node dist/index.js"]
