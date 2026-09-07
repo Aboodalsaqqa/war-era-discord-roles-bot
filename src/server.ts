@@ -89,9 +89,13 @@ export function startHealthServer(
         }
       }
 
-      const discordId = playerMatch[1];
+      const rawDiscordId = playerMatch[1];
+      const discordId = decodeURIComponent(rawDiscordId).trim();
 
       try {
+        // Pure direct database lookup: Discord ID -> linked WarEra Player ID.
+        // Performs an unconditional query on existing UserLink data.
+        // Does NOT check verification status, Citizen role, country, guild membership, or any eligibility condition.
         const link = await userLinkRepo.getByDiscordId(discordId);
         res.writeHead(200, {
           'Content-Type': 'application/json',
