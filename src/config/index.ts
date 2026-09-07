@@ -11,6 +11,7 @@ export interface Config {
   wareraApiKey: string;
   wareraApiBaseUrl: string;
   port: number;
+  internalApiKey?: string;
 }
 
 const getEnvOrThrow = (key: string): string => {
@@ -28,4 +29,5 @@ export const config: Config = {
   wareraApiKey: getEnvOrThrow('WARERA_API_KEY'),
   wareraApiBaseUrl: process.env.WARERA_API_BASE_URL || 'https://api2.warera.io/trpc/',
   port: parseInt(process.env.PORT || '10000', 10),
+  internalApiKey: process.env.INTERNAL_API_KEY || process.env.API_SECRET_KEY,
 };
