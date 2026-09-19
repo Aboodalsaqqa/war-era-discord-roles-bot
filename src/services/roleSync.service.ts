@@ -8,9 +8,11 @@ import { WarEraService } from '../warera/service';
 import { logger } from '../utils/logger';
 import { prisma } from '../database';
 import { syncMemberNickname } from './nicknameSync.service';
+import { ALL_REGIMENT_ROLE_IDS, getQualifyingRegimentRoleIds } from '../config/corps.config';
 
 export const EDUCATION_LVL_1_ROLE_ID = '1525835773230710864';
 export const EDUCATION_LVL_2_ROLE_ID = '1525836096351768616';
+export { ALL_REGIMENT_ROLE_IDS, REGIMENTS, getQualifyingRegimentRoleIds } from '../config/corps.config';
 
 export class RoleSyncService {
   constructor(
@@ -98,6 +100,9 @@ export class RoleSyncService {
       // Education roles
       managedRoleIds.add(EDUCATION_LVL_1_ROLE_ID);
       managedRoleIds.add(EDUCATION_LVL_2_ROLE_ID);
+
+      // Regiment / Corps roles
+      ALL_REGIMENT_ROLE_IDS.forEach(id => managedRoleIds.add(id));
 
       // ===== DEBUG: Citizen/Trusted Role Check =====
       const memberRoleIds = Array.from(member.roles.cache.keys());
@@ -317,6 +322,21 @@ export class RoleSyncService {
               logger.error({ error: (campaignErr as Error).message }, 'Failed during recruitment completion check');
             }
           }
+        }
+
+        // --- Regiment / Corps Roles ---
+        // A member receives a Regiment role automatically if they have ANY of the unit roles assigned to that Regiment.
+        // A member can receive more than one Regiment role if they belong to units under different Regiments.
+        // If a member no longer has any unit role belonging to a Regiment, remove that Regiment role.
+        const hasUnitRole = (unitRoleId: string): boolean => {
+          if (targetRoleIds.has(unitRoleId)) return true;
+          if (member.roles.cache.has(unitRoleId) && !managedRoleIds.has(unitRoleId)) return true;
+          return false;
+        };
+
+        const qualifyingRegimentRoleIds = getQualifyingRegimentRoleIds(hasUnitRole);
+        for (const regimentRoleId of qualifyingRegimentRoleIds) {
+          targetRoleIds.add(regimentRoleId);
         }
       }
 

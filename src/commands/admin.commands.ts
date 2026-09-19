@@ -8,7 +8,7 @@ import {
   PermissionFlagsBits,
 } from 'discord.js';
 import { VerificationService } from '../services/verification.service';
-import { RoleSyncService, EDUCATION_LVL_1_ROLE_ID, EDUCATION_LVL_2_ROLE_ID } from '../services/roleSync.service';
+import { RoleSyncService, EDUCATION_LVL_1_ROLE_ID, EDUCATION_LVL_2_ROLE_ID, ALL_REGIMENT_ROLE_IDS } from '../services/roleSync.service';
 import { GuildConfigRepository } from '../repositories/guildConfig.repository';
 import { MuRoleRepository } from '../repositories/muRole.repository';
 import { LevelRoleRepository } from '../repositories/levelRole.repository';
@@ -249,6 +249,7 @@ export class AdminCommands {
         levelRoles.forEach((r) => managedRoleIds.add(r.discordRoleId));
         managedRoleIds.add(EDUCATION_LVL_1_ROLE_ID);
         managedRoleIds.add(EDUCATION_LVL_2_ROLE_ID);
+        ALL_REGIMENT_ROLE_IDS.forEach((id) => managedRoleIds.add(id));
 
         const rolesToRemove = Array.from(managedRoleIds).filter((id) => member.roles.cache.has(id));
 
