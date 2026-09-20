@@ -131,7 +131,7 @@ export async function initDiscordBot(): Promise<Client> {
       logger.error({ error: (err as Error).message }, 'Failed to register slash commands');
     }
 
-    // Start sync cron job (6-hourly)
+    // Start sync cron job (hourly)
     startSyncJob(readyClient, roleSyncService, userLinkRepo);
 
     // Start recruitment reminders cron job (daily)
