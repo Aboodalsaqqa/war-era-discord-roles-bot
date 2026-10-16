@@ -13,6 +13,7 @@ import { WarEraService } from '../warera/service';
 import { logger } from '../utils/logger';
 import { prisma } from '../database';
 import { UserGetUserLiteResponse } from '../types/Responses';
+import { ProfileTracer } from '../utils/profileTracer';
 
 export class UserCommands {
   constructor(
@@ -167,40 +168,79 @@ export class UserCommands {
    */
   private async buildProfileEmbed(
     interaction: ChatInputCommandInteraction,
-    profile: UserGetUserLiteResponse
+    profile: UserGetUserLiteResponse,
+    tracer?: ProfileTracer
   ): Promise<EmbedBuilder> {
-    // Fetch MU details
-    let muName: string = 'None';
-    if (profile.mu) {
+    tracer?.startStage('profile_embed_enrichment', {
+      userId: profile._id,
+      hasMu: Boolean(profile.mu),
+    });
+
+    // 1. Concurrently fetch MU details, Owned MUs, and Rankings in parallel
+    const muPromise = (async (): Promise<string> => {
+      if (!profile.mu) return 'None';
+      tracer?.startStage('warera_fetch_mu', { muId: profile.mu });
       try {
         const mu = await this.wareraService.getMu(profile.mu);
-        muName = mu.name;
+        tracer?.endStage('warera_fetch_mu', { muName: mu.name });
+        return mu.name;
       } catch (err) {
+        tracer?.errorStage('warera_fetch_mu', err as Error, { muId: profile.mu });
         logger.warn({ error: (err as Error).message, muId: profile.mu }, 'Failed to fetch MU details for profile embed');
-        muName = `ID: ${profile.mu}`;
+        return `ID: ${profile.mu}`;
       }
-    }
+    })();
 
-    // Fetch Owned MUs
-    let ownedMusList = '';
-    try {
-      const ownedMus = await this.wareraService.getOwnedMus(profile._id);
-      if (ownedMus.length > 0) {
-        ownedMusList = ownedMus.map(m => `• ${m.name}`).join('\n');
+    const ownedMusPromise = (async (): Promise<string> => {
+      tracer?.startStage('warera_fetch_owned_mus', { userId: profile._id });
+      try {
+        const ownedMus = await this.wareraService.getOwnedMus(profile._id);
+        tracer?.endStage('warera_fetch_owned_mus', { count: ownedMus.length });
+        if (ownedMus.length > 0) {
+          return ownedMus.map((m) => `• ${m.name}`).join('\n');
+        }
+        return '';
+      } catch (err) {
+        tracer?.errorStage('warera_fetch_owned_mus', err as Error, { userId: profile._id });
+        logger.warn({ error: (err as Error).message }, 'Failed to fetch owned MUs');
+        return '';
       }
-    } catch (err) {
-      logger.warn({ error: (err as Error).message }, 'Failed to fetch owned MUs');
-    }
+    })();
 
-    // Fetch Local Egypt Rankings
-    let totalRankNum: number | null = null;
-    let weeklyRankNum: number | null = null;
-    try {
-      totalRankNum = await this.wareraService.getEgyptUserRank(profile._id, 'userDamages');
-      weeklyRankNum = await this.wareraService.getEgyptUserRank(profile._id, 'weeklyUserDamages');
-    } catch (err) {
-      logger.warn({ error: (err as Error).message }, 'Failed to fetch Egypt rankings');
-    }
+    const totalRankPromise = (async (): Promise<number | null> => {
+      tracer?.startStage('warera_fetch_rank_total', { userId: profile._id });
+      try {
+        const rank = await this.wareraService.getEgyptUserRank(profile._id, 'userDamages');
+        tracer?.endStage('warera_fetch_rank_total', { rank: rank ?? 'unranked' });
+        return rank;
+      } catch (err) {
+        tracer?.errorStage('warera_fetch_rank_total', err as Error, { userId: profile._id });
+        logger.warn({ error: (err as Error).message }, 'Failed to fetch Egypt rankings');
+        return null;
+      }
+    })();
+
+    const weeklyRankPromise = (async (): Promise<number | null> => {
+      tracer?.startStage('warera_fetch_rank_weekly', { userId: profile._id });
+      try {
+        const rank = await this.wareraService.getEgyptUserRank(profile._id, 'weeklyUserDamages');
+        tracer?.endStage('warera_fetch_rank_weekly', { rank: rank ?? 'unranked' });
+        return rank;
+      } catch (err) {
+        tracer?.errorStage('warera_fetch_rank_weekly', err as Error, { userId: profile._id });
+        logger.warn({ error: (err as Error).message }, 'Failed to fetch Egypt rankings');
+        return null;
+      }
+    })();
+
+    const [muName, ownedMusList, totalRankNum, weeklyRankNum] = await Promise.all([
+      muPromise,
+      ownedMusPromise,
+      totalRankPromise,
+      weeklyRankPromise,
+    ]);
+
+    tracer?.endStage('profile_embed_enrichment');
 
     // Compute Specialization
     const skills = profile.skills || {};
@@ -230,7 +270,6 @@ export class UserCommands {
       specializationSubText = '\n*الاخ بيلعب المزرعة السعيدة*';
     }
 
-    // Prepare variables
     // Prepare variables
     const level = profile.leveling?.level !== undefined ? profile.leveling.level : '?';
     const totalDamage = profile.stats?.damagesCount !== undefined ? profile.stats.damagesCount.toLocaleString() : '0';
@@ -279,27 +318,46 @@ export class UserCommands {
    * Handler for /profile
    */
   async profile(interaction: ChatInputCommandInteraction): Promise<void> {
+    const tracer = new ProfileTracer();
+    tracer.startStage('command_init', {
+      invokerId: interaction.user.id,
+      guildId: interaction.guildId ?? 'dm',
+    });
+
     const memberOption = interaction.options.getUser('member', false);
     const usernameOption = interaction.options.getString('username', false);
 
-    await interaction.deferReply();
-
     try {
+      tracer.startStage('interaction_defer');
+      await interaction.deferReply();
+      tracer.endStage('interaction_defer');
+
       // 1. Search by Username Option
       if (usernameOption) {
+        tracer.startStage('warera_search_players', { username: usernameOption });
         const profiles = await this.wareraService.searchPlayers(usernameOption);
+        tracer.endStage('warera_search_players', { count: profiles.length });
 
         if (profiles.length === 0) {
+          tracer.startStage('discord_edit_reply', { result: 'not_found' });
           await interaction.editReply({
             content: `❌ Could not find any WarEra player matching **${usernameOption}**.`,
           });
+          tracer.endStage('discord_edit_reply');
+          tracer.complete({ outcome: 'not_found' });
           return;
         }
 
         if (profiles.length === 1) {
           const profile = profiles[0];
-          const embed = await this.buildProfileEmbed(interaction, profile);
+          tracer.startStage('build_profile_embed', { userId: profile._id });
+          const embed = await this.buildProfileEmbed(interaction, profile, tracer);
+          tracer.endStage('build_profile_embed');
+
+          tracer.startStage('discord_edit_reply', { result: 'single_match' });
           await interaction.editReply({ embeds: [embed] });
+          tracer.endStage('discord_edit_reply');
+          tracer.complete({ outcome: 'single_match' });
           return;
         }
 
@@ -318,10 +376,13 @@ export class UserCommands {
 
         const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
 
+        tracer.startStage('discord_edit_reply', { result: 'multiple_matches', count: profiles.length });
         const reply = await interaction.editReply({
           content: '⚠️ Multiple players matched your search. Please select the correct profile:',
           components: [row],
         });
+        tracer.endStage('discord_edit_reply');
+        tracer.complete({ outcome: 'multiple_matches' });
 
         const collector = reply.createMessageComponentCollector({
           componentType: ComponentType.StringSelect,
@@ -337,21 +398,27 @@ export class UserCommands {
             return;
           }
 
+          const menuTracer = new ProfileTracer(`${tracer.requestId}_menu`);
+          menuTracer.startStage('menu_collect');
+
           await menuInteraction.deferUpdate();
           const selectedUserId = menuInteraction.values[0];
           const selectedProfile = profiles.find((p) => p._id === selectedUserId);
 
           if (!selectedProfile) {
             await menuInteraction.followUp({ content: '❌ Selected profile not found.', ephemeral: true });
+            menuTracer.endStage('menu_collect', { error: 'not_found' });
             return;
           }
 
-          const embed = await this.buildProfileEmbed(interaction, selectedProfile);
+          const embed = await this.buildProfileEmbed(interaction, selectedProfile, menuTracer);
           await menuInteraction.editReply({
             content: null,
             embeds: [embed],
             components: [],
           });
+          menuTracer.endStage('menu_collect', { selectedUserId });
+          menuTracer.complete({ outcome: 'menu_selection_success' });
           collector.stop();
         });
 
@@ -370,8 +437,12 @@ export class UserCommands {
       // 2. Resolve target Discord ID
       const targetDiscordId = memberOption ? memberOption.id : interaction.user.id;
 
+      tracer.startStage('db_lookup_link', { targetDiscordId });
       const userLink = await this.verificationService.getLinkByDiscordId(targetDiscordId);
+      tracer.endStage('db_lookup_link', { linked: Boolean(userLink) });
+
       if (!userLink) {
+        tracer.startStage('discord_edit_reply', { result: 'unlinked' });
         if (memberOption) {
           await interaction.editReply({
             content: `❌ <@${targetDiscordId}> is not linked to any WarEra profile.`,
@@ -381,18 +452,39 @@ export class UserCommands {
             content: '❌ Your Discord account is not linked to a WarEra profile. Use `/verify <username>` to verify first.',
           });
         }
+        tracer.endStage('discord_edit_reply');
+        tracer.complete({ outcome: 'unlinked' });
         return;
       }
 
       // Fetch profile
+      tracer.startStage('warera_user_profile', { wareraUserId: userLink.wareraUserId });
       const profile = await this.wareraService.getUserProfile(userLink.wareraUserId);
-      const embed = await this.buildProfileEmbed(interaction, profile);
+      tracer.endStage('warera_user_profile', { username: profile.username, level: profile.leveling?.level });
+
+      tracer.startStage('build_profile_embed', { wareraUserId: userLink.wareraUserId });
+      const embed = await this.buildProfileEmbed(interaction, profile, tracer);
+      tracer.endStage('build_profile_embed');
+
+      tracer.startStage('discord_edit_reply', { result: 'success' });
       await interaction.editReply({ embeds: [embed] });
+      tracer.endStage('discord_edit_reply');
+      tracer.complete({ outcome: 'success' });
     } catch (error) {
+      tracer.errorStage('command_error', error as Error);
+      tracer.complete({ outcome: 'error', error: (error as Error).message });
       logger.error({ error: (error as Error).message, usernameOption, memberId: memberOption?.id }, 'Error in profile command');
-      await interaction.editReply({
-        content: `❌ Failed to retrieve profile: ${(error as Error).message}`,
-      });
+      
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply({
+          content: `❌ Failed to retrieve profile: ${(error as Error).message}`,
+        }).catch(() => null);
+      } else {
+        await interaction.reply({
+          content: `❌ Failed to retrieve profile: ${(error as Error).message}`,
+          ephemeral: true,
+        }).catch(() => null);
+      }
     }
   }
 

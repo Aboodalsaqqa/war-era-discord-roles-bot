@@ -14,10 +14,12 @@ export type RequestPayload<T extends keyof Responses> = PathKey<T> extends keyof
 export class WarEraClient {
   private readonly baseUrl: string;
   private readonly apiKey: string;
+  private readonly defaultTimeoutMs: number;
 
-  constructor() {
+  constructor(timeoutMs?: number) {
     this.baseUrl = config.wareraApiBaseUrl;
     this.apiKey = config.wareraApiKey;
+    this.defaultTimeoutMs = timeoutMs ?? config.wareraApiTimeoutMs ?? 15000;
   }
 
   /**
@@ -25,7 +27,8 @@ export class WarEraClient {
    */
   async request<T extends keyof Responses>(
     endpoint: T,
-    payload: RequestPayload<T>
+    payload: RequestPayload<T>,
+    options?: { timeoutMs?: number; signal?: AbortSignal }
   ): Promise<Responses[T]> {
     const url = `${this.baseUrl}${endpoint}`;
     
@@ -36,8 +39,22 @@ export class WarEraClient {
     });
 
     const fullUrl = `${url}?${params.toString()}`;
+    const effectiveTimeout = options?.timeoutMs ?? this.defaultTimeoutMs;
 
-    logger.debug({ endpoint, payload }, `Calling WarEra API: ${endpoint}`);
+    logger.debug({ endpoint, payload, timeoutMs: effectiveTimeout }, `Calling WarEra API: ${endpoint}`);
+
+    const abortController = new AbortController();
+    let isTimedOut = false;
+
+    const timeoutHandle = setTimeout(() => {
+      isTimedOut = true;
+      abortController.abort();
+    }, effectiveTimeout);
+
+    // If caller provided an external signal, propagate abort
+    if (options?.signal) {
+      options.signal.addEventListener('abort', () => abortController.abort(), { once: true });
+    }
 
     try {
       const response = await fetch(fullUrl, {
@@ -46,6 +63,7 @@ export class WarEraClient {
           'authorization': this.apiKey,
           'accept': 'application/json',
         },
+        signal: abortController.signal,
       });
 
       if (!response.ok) {
@@ -82,8 +100,15 @@ export class WarEraClient {
       const data = result.data.json !== undefined ? result.data.json : result.data;
       return data as Responses[T];
     } catch (error: any) {
+      if (isTimedOut || error?.name === 'AbortError') {
+        const timeoutErr = new Error(`WarEra API request timed out after ${effectiveTimeout}ms: ${endpoint}`);
+        logger.error({ endpoint, payload, timeoutMs: effectiveTimeout }, 'WarEra API request timed out');
+        throw timeoutErr;
+      }
       logger.error({ error: error.message, endpoint, payload }, 'Failed to execute WarEra API request');
       throw error;
+    } finally {
+      clearTimeout(timeoutHandle);
     }
   }
 }

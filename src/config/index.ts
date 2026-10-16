@@ -12,6 +12,7 @@ export interface Config {
   wareraApiBaseUrl: string;
   port: number;
   internalApiKey?: string;
+  wareraApiTimeoutMs: number;
 }
 
 const getEnvOrThrow = (key: string): string => {
@@ -30,4 +31,5 @@ export const config: Config = {
   wareraApiBaseUrl: process.env.WARERA_API_BASE_URL || 'https://api2.warera.io/trpc/',
   port: parseInt(process.env.PORT || '10000', 10),
   internalApiKey: process.env.INTERNAL_API_KEY || process.env.API_SECRET_KEY,
+  wareraApiTimeoutMs: parseInt(process.env.WARERA_API_TIMEOUT_MS || '15000', 10),
 };

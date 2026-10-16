@@ -19,6 +19,7 @@ export class WarEraService {
   private countryCacheTimestamp: number = 0;
   
   private rankingCaches: Record<string, { items: RankingItem[]; timestamp: number }> = {};
+  private inFlightRankings: Map<string, Promise<RankingItem[]>> = new Map();
 
   constructor(client: WarEraClient) {
     this.client = client;
@@ -172,7 +173,11 @@ export class WarEraService {
   /**
    * Calculates the Egypt-specific ranking for a user using a 5-minute memory cache
    */
-  async getEgyptUserRank(userId: string, rankingType: 'userDamages' | 'weeklyUserDamages'): Promise<number | null> {
+  async getEgyptUserRank(
+    userId: string,
+    rankingType: 'userDamages' | 'weeklyUserDamages',
+    options?: { timeoutMs?: number }
+  ): Promise<number | null> {
     const egyptId = await this.getEgyptCountryId();
     const cacheKey = rankingType;
     const cacheDuration = 5 * 60 * 1000; // 5 minutes
@@ -182,12 +187,20 @@ export class WarEraService {
     if (this.rankingCaches[cacheKey] && Date.now() - this.rankingCaches[cacheKey].timestamp < cacheDuration) {
       items = this.rankingCaches[cacheKey].items;
     } else {
-      logger.info(`Fetching fresh global ranking from WarEra API for ${rankingType}...`);
-      const response = await this.client.request('ranking.getRanking', { rankingType });
-      if (response && response.items) {
-        items = response.items;
-        this.rankingCaches[cacheKey] = { items, timestamp: Date.now() };
+      let rankingPromise = this.inFlightRankings.get(cacheKey);
+      if (!rankingPromise) {
+        rankingPromise = (async () => {
+          logger.info(`Fetching fresh global ranking from WarEra API for ${rankingType}...`);
+          const response = await this.client.request('ranking.getRanking', { rankingType }, options);
+          const rankingItems = response && response.items ? response.items : [];
+          this.rankingCaches[cacheKey] = { items: rankingItems, timestamp: Date.now() };
+          return rankingItems;
+        })().finally(() => {
+          this.inFlightRankings.delete(cacheKey);
+        });
+        this.inFlightRankings.set(cacheKey, rankingPromise);
       }
+      items = await rankingPromise;
     }
 
     if (items.length === 0) return null;
