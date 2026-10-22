@@ -46,6 +46,57 @@ export async function initDiscordBot(): Promise<Client> {
     ],
   });
 
+  // REST client rate-limit and warning diagnostics
+  client.rest.on('rateLimited', (rateLimitInfo) => {
+    logger.warn(
+      {
+        global: rateLimitInfo.global,
+        method: rateLimitInfo.method,
+        url: rateLimitInfo.url,
+        route: rateLimitInfo.route,
+        timeToReset: rateLimitInfo.timeToReset,
+        limit: rateLimitInfo.limit,
+        sublimitTimeout: rateLimitInfo.sublimitTimeout,
+      },
+      '[DISCORD_REST] Rate limit encountered on Discord REST API'
+    );
+  });
+
+  client.rest.on('invalidRequestWarning', (warningInfo) => {
+    logger.warn(
+      {
+        count: warningInfo.count,
+        remainingTime: warningInfo.remainingTime,
+      },
+      '[DISCORD_REST] Invalid request warning received from Discord'
+    );
+  });
+
+  // Gateway client and shard error/lifecycle monitoring
+  client.on(Events.Error, (error) => {
+    logger.error({ error: error.message, name: error.name }, '[DISCORD_CLIENT] Gateway client error');
+  });
+
+  client.on(Events.Warn, (warning) => {
+    logger.warn({ warning }, '[DISCORD_CLIENT] Gateway client warning');
+  });
+
+  client.on(Events.ShardError, (error, shardId) => {
+    logger.error({ error: error.message, shardId }, '[DISCORD_CLIENT] Gateway shard error');
+  });
+
+  client.on(Events.ShardDisconnect, (event, shardId) => {
+    logger.warn({ code: event.code, reason: event.reason, shardId }, '[DISCORD_CLIENT] Gateway shard disconnected');
+  });
+
+  client.on(Events.ShardReconnecting, (shardId) => {
+    logger.info({ shardId }, '[DISCORD_CLIENT] Gateway shard reconnecting');
+  });
+
+  client.on(Events.ShardResume, (replayedEvents, shardId) => {
+    logger.info({ replayedEvents, shardId }, '[DISCORD_CLIENT] Gateway shard resumed');
+  });
+
   // 1. Dependency Injection Setup
   const wareraClient = new WarEraClient();
   const wareraService = new WarEraService(wareraClient);
@@ -173,13 +224,15 @@ export async function initDiscordBot(): Promise<Client> {
           error: (err as Error).message,
           commandName: interaction.commandName,
           userId: interaction.user.id,
+          deferred: interaction.deferred,
+          replied: interaction.replied,
         },
         'Unhandled error in command router'
       );
-      if (interaction.deferred || interaction.replied) {
+      if (interaction.deferred && !interaction.replied) {
+        await interaction.editReply({ content: '❌ An unexpected error occurred.' }).catch(() => null);
+      } else if (interaction.replied) {
         await interaction.followUp({ content: '❌ An unexpected error occurred.', ephemeral: true }).catch(() => null);
-      } else {
-        await interaction.reply({ content: '❌ An unexpected error occurred.', ephemeral: true }).catch(() => null);
       }
     }
   });

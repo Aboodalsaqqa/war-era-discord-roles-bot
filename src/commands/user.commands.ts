@@ -327,10 +327,68 @@ export class UserCommands {
     const memberOption = interaction.options.getUser('member', false);
     const usernameOption = interaction.options.getString('username', false);
 
+    // Dedicated deferReply execution with isolated error tracking & timeout warning
+    const deferStart = Date.now();
+    tracer.startStage('interaction_defer', {
+      invokerId: interaction.user.id,
+      guildId: interaction.guildId ?? 'dm',
+    });
+    logger.info(
+      {
+        requestId: tracer.requestId,
+        command: 'profile',
+        invokerId: interaction.user.id,
+        guildId: interaction.guildId ?? 'dm',
+      },
+      'Starting interaction.deferReply()...'
+    );
+
+    let deferWarningTimer: NodeJS.Timeout | null = setTimeout(() => {
+      logger.warn(
+        {
+          requestId: tracer.requestId,
+          elapsedMs: Date.now() - deferStart,
+          command: 'profile',
+          invokerId: interaction.user.id,
+        },
+        'interaction.deferReply() has exceeded 2000ms - risk of Discord 3-second timeout'
+      );
+    }, 2000);
+
     try {
-      tracer.startStage('interaction_defer');
       await interaction.deferReply();
+      if (deferWarningTimer) clearTimeout(deferWarningTimer);
+      const deferDurationMs = Date.now() - deferStart;
       tracer.endStage('interaction_defer');
+      logger.info(
+        { requestId: tracer.requestId, durationMs: deferDurationMs },
+        'interaction.deferReply() completed successfully'
+      );
+    } catch (deferError: any) {
+      if (deferWarningTimer) clearTimeout(deferWarningTimer);
+      const deferDurationMs = Date.now() - deferStart;
+      const safeErrorMessage = deferError instanceof Error ? deferError.message : String(deferError);
+      tracer.errorStage('interaction_defer', deferError, {
+        errorCode: deferError?.code,
+        status: deferError?.status,
+      });
+      tracer.complete({ outcome: 'defer_failed', error: safeErrorMessage });
+      logger.error(
+        {
+          requestId: tracer.requestId,
+          durationMs: deferDurationMs,
+          error: safeErrorMessage,
+          code: deferError?.code,
+          status: deferError?.status,
+        },
+        'interaction.deferReply() failed'
+      );
+      // Since deferReply failed or timed out, the interaction token is invalid/expired.
+      // Do not attempt an invalid second response.
+      return;
+    }
+
+    try {
 
       // 1. Search by Username Option
       if (usernameOption) {
@@ -475,15 +533,14 @@ export class UserCommands {
       tracer.complete({ outcome: 'error', error: (error as Error).message });
       logger.error({ error: (error as Error).message, usernameOption, memberId: memberOption?.id }, 'Error in profile command');
       
-      if (interaction.deferred || interaction.replied) {
+      // deferReply has already succeeded if we reached this catch block.
+      // Safely editReply without attempting an invalid second reply.
+      if (interaction.deferred && !interaction.replied) {
         await interaction.editReply({
           content: `❌ Failed to retrieve profile: ${(error as Error).message}`,
-        }).catch(() => null);
-      } else {
-        await interaction.reply({
-          content: `❌ Failed to retrieve profile: ${(error as Error).message}`,
-          ephemeral: true,
-        }).catch(() => null);
+        }).catch((err) => {
+          logger.warn({ error: err.message }, 'Failed to send editReply error message in profile command');
+        });
       }
     }
   }

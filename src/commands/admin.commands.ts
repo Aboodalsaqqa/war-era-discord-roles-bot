@@ -36,30 +36,81 @@ export class AdminCommands {
     const guild = interaction.guild;
     if (!guild) return false;
 
-    const member = interaction.member instanceof GuildMember
-      ? interaction.member
-      : await guild.members.fetch(interaction.user.id).catch(() => null);
+    // Check interaction-level administrator permissions if present
+    if (interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+      return true;
+    }
+
+    const member = interaction.member || (await guild.members.fetch(interaction.user.id).catch(() => null));
 
     if (!member) return false;
 
-    // 1. Administrator
-    if (member.permissions.has(PermissionFlagsBits.Administrator)) {
+    // 1. Administrator permission check on member
+    const isAdmin =
+      interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) ||
+      (member.permissions && typeof (member.permissions as any).has === 'function'
+        ? (member.permissions as any).has(PermissionFlagsBits.Administrator)
+        : false);
+    if (isAdmin) {
       return true;
     }
 
-    // 2. Moderator role
-    if (member.roles.cache.has(FORCE_VERIFY_MODERATOR_ROLE_ID)) {
+    // Helper to verify role presence across GuildMember cache, raw array, or interaction payload
+    const hasRole = (roleId: string): boolean => {
+      if (!roleId) return false;
+      const mem = member as any;
+      if (mem?.roles) {
+        if (typeof mem.roles.cache?.has === 'function' && mem.roles.cache.has(roleId)) {
+          return true;
+        }
+        if (Array.isArray(mem.roles) && mem.roles.includes(roleId)) {
+          return true;
+        }
+      }
+      if (Array.isArray(mem?._roles) && mem._roles.includes(roleId)) {
+        return true;
+      }
+      const raw = interaction.member as any;
+      if (raw?.roles) {
+        if (typeof raw.roles.cache?.has === 'function' && raw.roles.cache.has(roleId)) {
+          return true;
+        }
+        if (Array.isArray(raw.roles) && raw.roles.includes(roleId)) {
+          return true;
+        }
+      }
+      if (Array.isArray(raw?._roles) && raw._roles.includes(roleId)) {
+        return true;
+      }
+      return false;
+    };
+
+    // 2. Specific authorized role ID (1496865174920101970)
+    if (hasRole(FORCE_VERIFY_AUTHORIZED_ROLE_ID)) {
       return true;
     }
 
-    // 3. Education Staff role
-    if (member.roles.cache.has(FORCE_VERIFY_EDUCATION_STAFF_ROLE_ID)) {
+    // 3. Moderator role
+    if (hasRole(FORCE_VERIFY_MODERATOR_ROLE_ID)) {
       return true;
     }
 
-    // 4. Additional Authorized role
-    if (member.roles.cache.has(FORCE_VERIFY_AUTHORIZED_ROLE_ID)) {
+    // 4. Education Staff role
+    if (hasRole(FORCE_VERIFY_EDUCATION_STAFF_ROLE_ID)) {
       return true;
+    }
+
+    // 5. Configured Officer or Trusted role (from guildConfig)
+    try {
+      const config = await this.guildConfigRepo.getByGuildId(guild.id);
+      if (config?.officerRoleId && hasRole(config.officerRoleId)) {
+        return true;
+      }
+      if (config?.trustedRoleId && hasRole(config.trustedRoleId)) {
+        return true;
+      }
+    } catch (err) {
+      logger.warn({ error: (err as Error).message, guildId: guild.id }, 'Failed to check guildConfig for officer role');
     }
 
     return false;
@@ -81,7 +132,7 @@ export class AdminCommands {
     const isAuthorized = await this.isForceVerifyAuthorized(interaction);
     if (!isAuthorized) {
       await interaction.reply({
-        content: '❌ You do not have permission to use `/forceverify`. Only Administrators, Moderators, or Education Staff may use this command.',
+        content: '❌ You do not have permission to use `/forceverify`. Only Administrators, Moderators, Education Staff, or authorized roles may use this command.',
         ephemeral: true,
       });
       return;

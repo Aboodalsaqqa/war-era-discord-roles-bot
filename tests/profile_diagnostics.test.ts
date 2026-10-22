@@ -213,6 +213,38 @@ async function runTests() {
 
   console.log('✔ Test 5 Passed: Deferred interactions edit reply with informative error message on failure.\n');
 
+  // -------------------------------------------------------------
+  // Test 6: /profile error handling when deferReply() itself fails
+  // -------------------------------------------------------------
+  console.log('Test 6: /profile error handling when deferReply() itself fails');
+  let test6ReplyCalled = false;
+  let test6EditReplyCalled = false;
+
+  const mockInteractionDeferFails = {
+    user: { id: 'disc_user_2' },
+    guildId: 'guild_1',
+    options: {
+      getUser: () => null,
+      getString: () => null,
+    },
+    deferred: false,
+    replied: false,
+    deferReply: async () => {
+      const err: any = new Error('DiscordAPIError[10062]: Unknown interaction');
+      err.code = 10062;
+      err.status = 404;
+      throw err;
+    },
+    editReply: async () => { test6EditReplyCalled = true; },
+    reply: async () => { test6ReplyCalled = true; },
+  };
+
+  await commandHandler.profile(mockInteractionDeferFails as any);
+
+  assert.strictEqual(test6EditReplyCalled, false, 'editReply should NOT be called when deferReply fails');
+  assert.strictEqual(test6ReplyCalled, false, 'reply should NOT be called when deferReply fails (prevents invalid second response)');
+  console.log('✔ Test 6 Passed: Failed deferReply exits cleanly without attempting invalid second response.\n');
+
   console.log('===================================================');
   console.log('ALL DIAGNOSTIC & PERFORMANCE TESTS PASSED SUCCESSFULLY!');
   console.log('===================================================');
