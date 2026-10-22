@@ -110,7 +110,7 @@ export class ReadinessCommands {
       logger.error({ error: (err as Error).message, guildId }, 'Failed to generate readiness report command');
       await interaction.editReply({
         content: `❌ Failed to generate military readiness report: ${(err as Error).message}`,
-      });
+      }).catch(() => null);
     }
   }
 }

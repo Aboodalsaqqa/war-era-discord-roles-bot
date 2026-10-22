@@ -132,7 +132,7 @@ export class ConfigCommands {
         await interaction.editReply({ embeds: [embed] });
       } catch (error) {
         logger.error({ error: (error as Error).message, guildId }, 'Error listing MU roles');
-        await interaction.editReply({ content: '❌ Failed to list MU roles.' });
+        await interaction.editReply({ content: '❌ Failed to list MU roles.' }).catch(() => null);
       }
       return;
     }
@@ -207,7 +207,7 @@ export class ConfigCommands {
         await interaction.editReply({ embeds: [embed] });
       } catch (error) {
         logger.error({ error: (error as Error).message, guildId }, 'Error listing level roles');
-        await interaction.editReply({ content: '❌ Failed to list Level roles.' });
+        await interaction.editReply({ content: '❌ Failed to list Level roles.' }).catch(() => null);
       }
       return;
     }

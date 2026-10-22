@@ -322,7 +322,7 @@ export class AdminCommands {
       }
     } catch (error) {
       logger.error({ error: (error as Error).message, targetUserId: targetUser.id }, 'Error unVerify');
-      await interaction.editReply({ content: `❌ Unverify failed: ${(error as Error).message}` });
+      await interaction.editReply({ content: `❌ Unverify failed: ${(error as Error).message}` }).catch(() => null);
     }
   }
 
@@ -358,7 +358,7 @@ export class AdminCommands {
       await interaction.editReply({ content: `✅ Roles successfully synchronized for <@${targetUser.id}>.` });
     } catch (error) {
       logger.error({ error: (error as Error).message, targetUserId: targetUser.id }, 'Error sync command');
-      await interaction.editReply({ content: `❌ Sync failed: ${(error as Error).message}` });
+      await interaction.editReply({ content: `❌ Sync failed: ${(error as Error).message}` }).catch(() => null);
     }
   }
 
@@ -409,7 +409,7 @@ export class AdminCommands {
       });
     } catch (error) {
       logger.error({ error: (error as Error).message }, 'Error in syncAll');
-      await interaction.editReply({ content: `❌ Syncall failed: ${(error as Error).message}` });
+      await interaction.editReply({ content: `❌ Syncall failed: ${(error as Error).message}` }).catch(() => null);
     }
   }
 }

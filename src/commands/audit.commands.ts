@@ -228,7 +228,7 @@ export class AuditCommands {
 
     } catch (error) {
       logger.error({ error: (error as Error).message }, 'Error in muAudit command');
-      await interaction.editReply({ content: `❌ An error occurred during the MU Audit: ${(error as Error).message}` });
+      await interaction.editReply({ content: `❌ An error occurred during the MU Audit: ${(error as Error).message}` }).catch(() => null);
     }
   }
 }

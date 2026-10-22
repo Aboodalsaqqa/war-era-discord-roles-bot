@@ -579,7 +579,7 @@ export class UserCommands {
       logger.error({ error: (error as Error).message, discordId }, 'Error running /sync-me');
       await interaction.editReply({
         content: `❌ Sync failed: ${(error as Error).message}`,
-      });
+      }).catch(() => null);
     }
   }
 }

@@ -75,7 +75,7 @@ export class OptimizeCommands {
 
     } catch (error) {
       logger.error({ error }, 'Error running optimizer command');
-      await interaction.editReply('❌ An error occurred while running the optimizer. Please try again later.');
+      await interaction.editReply('❌ An error occurred while running the optimizer. Please try again later.').catch(() => null);
     }
   }
 }

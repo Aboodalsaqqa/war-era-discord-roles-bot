@@ -67,7 +67,7 @@ export class RecruitmentCommands {
         });
       } catch (err) {
         logger.error({ error: (err as Error).message }, 'Error starting recruitment campaign');
-        await interaction.editReply({ content: `❌ Failed to start campaign: ${(err as Error).message}` });
+        await interaction.editReply({ content: `❌ Failed to start campaign: ${(err as Error).message}` }).catch(() => null);
       }
       return;
     }
@@ -87,7 +87,7 @@ export class RecruitmentCommands {
         }
       } catch (err) {
         logger.error({ error: (err as Error).message }, 'Error stopping recruitment campaign');
-        await interaction.editReply({ content: `❌ Failed to stop campaign: ${(err as Error).message}` });
+        await interaction.editReply({ content: `❌ Failed to stop campaign: ${(err as Error).message}` }).catch(() => null);
       }
       return;
     }
@@ -107,7 +107,7 @@ export class RecruitmentCommands {
         });
       } catch (err) {
         logger.error({ error: (err as Error).message }, 'Error setting exemption');
-        await interaction.editReply({ content: `❌ Exemption update failed: ${(err as Error).message}` });
+        await interaction.editReply({ content: `❌ Exemption update failed: ${(err as Error).message}` }).catch(() => null);
       }
       return;
     }
@@ -133,7 +133,7 @@ export class RecruitmentCommands {
         await interaction.editReply({ embeds: [embed] });
       } catch (err) {
         logger.error({ error: (err as Error).message }, 'Error retrieving campaign status');
-        await interaction.editReply({ content: `❌ Failed to retrieve status: ${(err as Error).message}` });
+        await interaction.editReply({ content: `❌ Failed to retrieve status: ${(err as Error).message}` }).catch(() => null);
       }
       return;
     }
@@ -172,7 +172,7 @@ export class RecruitmentCommands {
         await interaction.editReply({ embeds: [embed] });
       } catch (err) {
         logger.error({ error: (err as Error).message }, 'Error generating recruitment report');
-        await interaction.editReply({ content: `❌ Failed to generate report: ${(err as Error).message}` });
+        await interaction.editReply({ content: `❌ Failed to generate report: ${(err as Error).message}` }).catch(() => null);
       }
       return;
     }

@@ -101,7 +101,7 @@ export class OperationCommands {
         });
       } catch (err) {
         logger.error({ error: (err as Error).message }, 'Failed to create and dispatch operation');
-        await interaction.editReply({ content: `❌ Operation creation failed: ${(err as Error).message}` });
+        await interaction.editReply({ content: `❌ Operation creation failed: ${(err as Error).message}` }).catch(() => null);
       }
       return;
     }
@@ -135,7 +135,7 @@ export class OperationCommands {
         await interaction.editReply({ embeds: [embed] });
       } catch (err) {
         logger.error({ error: (err as Error).message }, 'Error listing operations');
-        await interaction.editReply({ content: '❌ Failed to retrieve operations list.' });
+        await interaction.editReply({ content: '❌ Failed to retrieve operations list.' }).catch(() => null);
       }
       return;
     }
@@ -171,7 +171,7 @@ export class OperationCommands {
         await interaction.editReply({ embeds: [embed] });
       } catch (err) {
         logger.error({ error: (err as Error).message, operationId }, 'Error retrieving operation stats');
-        await interaction.editReply({ content: `❌ Failed to retrieve operation status: ${(err as Error).message}` });
+        await interaction.editReply({ content: `❌ Failed to retrieve operation status: ${(err as Error).message}` }).catch(() => null);
       }
       return;
     }

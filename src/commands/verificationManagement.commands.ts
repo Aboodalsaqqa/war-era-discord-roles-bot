@@ -197,7 +197,7 @@ export class VerificationManagementCommands {
       });
     } catch (err) {
       logger.error({ err }, 'Failed to generate verified users export');
-      await interaction.editReply({ content: `❌ Failed to generate export: ${(err as Error).message}` });
+      await interaction.editReply({ content: `❌ Failed to generate export: ${(err as Error).message}` }).catch(() => null);
     }
   }
 }
