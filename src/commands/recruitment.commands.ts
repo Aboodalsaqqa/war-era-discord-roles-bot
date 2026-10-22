@@ -2,6 +2,7 @@ import { ChatInputCommandInteraction, EmbedBuilder, GuildMember, PermissionFlags
 import { RecruitmentService } from '../services/recruitment.service';
 import { GuildConfigRepository } from '../repositories/guildConfig.repository';
 import { logger } from '../utils/logger';
+import { CommandTracer, safeDeferReply, safeEditReply } from '../utils/commandTracer';
 
 export class RecruitmentCommands {
   constructor(
@@ -28,30 +29,36 @@ export class RecruitmentCommands {
     return false;
   }
 
-  async handleCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+  async handleCommand(interaction: ChatInputCommandInteraction, correlationId?: string): Promise<void> {
+    const tracer = new CommandTracer('recruitment', correlationId);
+    tracer.checkpoint(6, 'handler_start', { invokerId: interaction.user.id });
+
     const subcommand = interaction.options.getSubcommand(true);
     const guildId = interaction.guildId;
+    const isPublic = subcommand === 'status' || subcommand === 'report';
 
-    if (!guildId) {
-      await interaction.reply({ content: '❌ This command must be run inside a guild.', ephemeral: true });
+    const deferred = await safeDeferReply(interaction, tracer, { ephemeral: !isPublic });
+    if (!deferred) return;
+
+    if (!guildId || !interaction.guild) {
+      await safeEditReply(interaction, tracer, { content: '❌ This command must be run inside a guild.' });
       return;
     }
 
     // 1. Check Permissions
     const isAuthorized = await this.isOfficerOrAdmin(interaction);
     if (!isAuthorized) {
-      await interaction.reply({
+      await safeEditReply(interaction, tracer, {
         content: '❌ You do not have permission to use MoD recruitment commands. Only administrators or configured Officers may use these.',
-        ephemeral: true,
       });
       return;
     }
 
-    logger.info({ guildId, subcommand, userId: interaction.user.id }, 'Executing recruitment command');
+    logger.info({ correlationId: tracer.correlationId, guildId, subcommand, userId: interaction.user.id }, 'Executing recruitment command');
 
     if (subcommand === 'start') {
-      await interaction.deferReply({ ephemeral: true });
       try {
+        tracer.checkpoint(9, 'work_start', { action: 'start' });
         const title = interaction.options.getString('title', true);
         const minimumLevel = interaction.options.getInteger('minimum-level', true);
 
@@ -62,60 +69,66 @@ export class RecruitmentCommands {
           interaction.user.id
         );
 
-        await interaction.editReply({
+        tracer.checkpoint(9, 'work_complete', { action: 'start', campaignId: campaign.id });
+        await safeEditReply(interaction, tracer, {
           content: `✅ Recruitment campaign **"${campaign.title}"** started successfully for players Level **${campaign.minimumLevel}+**.`,
         });
       } catch (err) {
-        logger.error({ error: (err as Error).message }, 'Error starting recruitment campaign');
-        await interaction.editReply({ content: `❌ Failed to start campaign: ${(err as Error).message}` }).catch(() => null);
+        tracer.errorCheckpoint(9, 'work_error', err);
+        logger.error({ correlationId: tracer.correlationId, error: (err as Error).message }, 'Error starting recruitment campaign');
+        await safeEditReply(interaction, tracer, { content: `❌ Failed to start campaign: ${(err as Error).message}` });
       }
       return;
     }
 
     if (subcommand === 'stop') {
-      await interaction.deferReply({ ephemeral: true });
       try {
+        tracer.checkpoint(9, 'work_start', { action: 'stop' });
         const campaign = await this.recruitmentService.stopCampaign(guildId);
+        tracer.checkpoint(9, 'work_complete', { action: 'stop', found: !!campaign });
         if (campaign) {
-          await interaction.editReply({
+          await safeEditReply(interaction, tracer, {
             content: `✅ Recruitment campaign **"${campaign.title}"** stopped.`,
           });
         } else {
-          await interaction.editReply({
+          await safeEditReply(interaction, tracer, {
             content: '❌ There is no active recruitment campaign to stop.',
           });
         }
       } catch (err) {
-        logger.error({ error: (err as Error).message }, 'Error stopping recruitment campaign');
-        await interaction.editReply({ content: `❌ Failed to stop campaign: ${(err as Error).message}` }).catch(() => null);
+        tracer.errorCheckpoint(9, 'work_error', err);
+        logger.error({ correlationId: tracer.correlationId, error: (err as Error).message }, 'Error stopping recruitment campaign');
+        await safeEditReply(interaction, tracer, { content: `❌ Failed to stop campaign: ${(err as Error).message}` });
       }
       return;
     }
 
     if (subcommand === 'exempt' || subcommand === 'unexempt') {
-      await interaction.deferReply({ ephemeral: true });
       try {
+        tracer.checkpoint(9, 'work_start', { action: subcommand });
         const targetUser = interaction.options.getUser('user', true);
         const exempt = subcommand === 'exempt';
 
         await this.recruitmentService.setExemption(targetUser.id, exempt);
 
-        await interaction.editReply({
+        tracer.checkpoint(9, 'work_complete', { action: subcommand, targetId: targetUser.id });
+        await safeEditReply(interaction, tracer, {
           content: exempt
             ? `✅ Exempted <@${targetUser.id}> from recruitment reminders.`
             : `✅ Removed exemption for <@${targetUser.id}>. They will now receive recruitment reminders if eligible.`,
         });
       } catch (err) {
-        logger.error({ error: (err as Error).message }, 'Error setting exemption');
-        await interaction.editReply({ content: `❌ Exemption update failed: ${(err as Error).message}` }).catch(() => null);
+        tracer.errorCheckpoint(9, 'work_error', err);
+        logger.error({ correlationId: tracer.correlationId, error: (err as Error).message }, 'Error setting exemption');
+        await safeEditReply(interaction, tracer, { content: `❌ Exemption update failed: ${(err as Error).message}` });
       }
       return;
     }
 
     if (subcommand === 'status') {
-      await interaction.deferReply();
       try {
-        const stats = await this.recruitmentService.getCampaignStats(interaction.guild!);
+        tracer.checkpoint(9, 'work_start', { action: 'status' });
+        const stats = await this.recruitmentService.getCampaignStats(interaction.guild);
         
         const embed = new EmbedBuilder()
           .setTitle(`📈 Recruitment Campaign Status`)
@@ -130,18 +143,20 @@ export class RecruitmentCommands {
           .setFooter({ text: 'Egypt Roles Bot • Developed by El-Gaiiar' })
           .setTimestamp();
 
-        await interaction.editReply({ embeds: [embed] });
+        tracer.checkpoint(9, 'work_complete', { action: 'status' });
+        await safeEditReply(interaction, tracer, { embeds: [embed] });
       } catch (err) {
-        logger.error({ error: (err as Error).message }, 'Error retrieving campaign status');
-        await interaction.editReply({ content: `❌ Failed to retrieve status: ${(err as Error).message}` }).catch(() => null);
+        tracer.errorCheckpoint(9, 'work_error', err);
+        logger.error({ correlationId: tracer.correlationId, error: (err as Error).message }, 'Error retrieving campaign status');
+        await safeEditReply(interaction, tracer, { content: `❌ Failed to retrieve status: ${(err as Error).message}` });
       }
       return;
     }
 
     if (subcommand === 'report') {
-      await interaction.deferReply();
       try {
-        const report = await this.recruitmentService.getDetailedReport(interaction.guild!);
+        tracer.checkpoint(9, 'work_start', { action: 'report' });
+        const report = await this.recruitmentService.getDetailedReport(interaction.guild);
 
         const embed = new EmbedBuilder()
           .setTitle(`📊 Recruitment Mobilization Report`)
@@ -169,10 +184,12 @@ export class RecruitmentCommands {
           embed.addFields({ name: 'Conversion by Military Unit (MU)', value: 'No MU members registered/eligible.', inline: false });
         }
 
-        await interaction.editReply({ embeds: [embed] });
+        tracer.checkpoint(9, 'work_complete', { action: 'report' });
+        await safeEditReply(interaction, tracer, { embeds: [embed] });
       } catch (err) {
-        logger.error({ error: (err as Error).message }, 'Error generating recruitment report');
-        await interaction.editReply({ content: `❌ Failed to generate report: ${(err as Error).message}` }).catch(() => null);
+        tracer.errorCheckpoint(9, 'work_error', err);
+        logger.error({ correlationId: tracer.correlationId, error: (err as Error).message }, 'Error generating recruitment report');
+        await safeEditReply(interaction, tracer, { content: `❌ Failed to generate report: ${(err as Error).message}` });
       }
       return;
     }

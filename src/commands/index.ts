@@ -537,73 +537,94 @@ export class CommandRouter {
     private readonly optimizeCommands: OptimizeCommands
   ) {}
 
-  async handleInteraction(interaction: ChatInputCommandInteraction): Promise<void> {
+  async handleInteraction(
+    interaction: ChatInputCommandInteraction,
+    correlationId?: string
+  ): Promise<void> {
     const { commandName } = interaction;
-    logger.debug({ commandName, userId: interaction.user.id }, 'Routing slash command interaction');
+    const corrId = correlationId || `cmd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    logger.info(
+      {
+        event: 'CHECKPOINT_5_ROUTER_DISPATCH',
+        correlationId: corrId,
+        commandName,
+        userId: interaction.user.id,
+        guildId: interaction.guildId ?? 'dm',
+      },
+      `[CHECKPOINT_5_ROUTER_DISPATCH] Selecting handler for /${commandName}`
+    );
 
     try {
       switch (commandName) {
         case 'verify':
-          await this.userCommands.verify(interaction);
+          await this.userCommands.verify(interaction, corrId);
           break;
         case 'profile':
-          await this.userCommands.profile(interaction);
+          await this.userCommands.profile(interaction, corrId);
           break;
         case 'sync-me':
-          await this.userCommands.syncMe(interaction);
+          await this.userCommands.syncMe(interaction, corrId);
           break;
         case 'forceverify':
-          await this.adminCommands.forceVerify(interaction);
+          await this.adminCommands.forceVerify(interaction, corrId);
           break;
         case 'unverify':
-          await this.adminCommands.unVerify(interaction);
+          await this.adminCommands.unVerify(interaction, corrId);
           break;
         case 'sync':
-          await this.adminCommands.sync(interaction);
+          await this.adminCommands.sync(interaction, corrId);
           break;
         case 'sync-all':
-          await this.adminCommands.syncAll(interaction);
+          await this.adminCommands.syncAll(interaction, corrId);
           break;
         case 'config':
-          await this.configCommands.configureRoles(interaction);
+          await this.configCommands.configureRoles(interaction, corrId);
           break;
         case 'mu-role':
-          await this.configCommands.configureMuRoles(interaction);
+          await this.configCommands.configureMuRoles(interaction, corrId);
           break;
         case 'level-role':
-          await this.configCommands.configureLevelRoles(interaction);
+          await this.configCommands.configureLevelRoles(interaction, corrId);
           break;
         case 'recruitment':
-          await this.recruitmentCommands.handleCommand(interaction);
+          await this.recruitmentCommands.handleCommand(interaction, corrId);
           break;
         case 'operation':
-          await this.operationCommands.handleCommand(interaction);
+          await this.operationCommands.handleCommand(interaction, corrId);
           break;
         case 'readiness':
-          await this.readinessCommands.handleCommand(interaction);
+          await this.readinessCommands.handleCommand(interaction, corrId);
           break;
         case 'verified-list':
-          await this.verificationManagementCommands.handleListCommand(interaction);
+          await this.verificationManagementCommands.handleListCommand(interaction, corrId);
           break;
         case 'verified-export':
-          await this.verificationManagementCommands.handleExportCommand(interaction);
+          await this.verificationManagementCommands.handleExportCommand(interaction, corrId);
           break;
         case 'mu-audit':
-          await this.auditCommands.muAudit(interaction);
+          await this.auditCommands.muAudit(interaction, corrId);
           break;
         case 'optimize':
-          await this.optimizeCommands.handleOptimize(interaction);
+          await this.optimizeCommands.handleOptimize(interaction, corrId);
           break;
         default:
-          logger.warn({ commandName }, 'Received unhandled command name');
+          logger.warn({ correlationId: corrId, commandName }, 'Received unhandled command name');
           await interaction.reply({ content: '❌ Command not recognized.', ephemeral: true });
       }
     } catch (error) {
-      logger.error({ error: (error as Error).message, commandName }, 'Error handling command interaction router');
+      logger.error(
+        { correlationId: corrId, error: (error as Error).message, commandName },
+        'Error handling command interaction router'
+      );
       if (interaction.deferred || interaction.replied) {
-        await interaction.followUp({ content: '❌ An error occurred while executing this command.', ephemeral: true }).catch(() => null);
+        await interaction.followUp({ content: '❌ An error occurred while executing this command.', ephemeral: true }).catch((fuErr) => {
+          logger.error({ correlationId: corrId, error: (fuErr as Error).message }, 'Failed to send followUp on router error');
+        });
       } else {
-        await interaction.reply({ content: '❌ An error occurred while executing this command.', ephemeral: true }).catch(() => null);
+        await interaction.reply({ content: '❌ An error occurred while executing this command.', ephemeral: true }).catch((replyErr) => {
+          logger.error({ correlationId: corrId, error: (replyErr as Error).message }, 'Failed to send reply on router error');
+        });
       }
     }
   }

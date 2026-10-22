@@ -12,6 +12,7 @@ import {
 import { VerificationManagementService, VerifiedUserData } from '../services/verificationManagement.service';
 import { GuildConfigRepository } from '../repositories/guildConfig.repository';
 import { logger } from '../utils/logger';
+import { CommandTracer, safeDeferReply, safeEditReply } from '../utils/commandTracer';
 
 export class VerificationManagementCommands {
   constructor(
@@ -35,169 +36,200 @@ export class VerificationManagementCommands {
     return false;
   }
 
-  async handleListCommand(interaction: ChatInputCommandInteraction): Promise<void> {
-    const guild = interaction.guild;
-    if (!guild) {
-      await interaction.reply({ content: '❌ This command must be run inside a guild.', ephemeral: true });
-      return;
-    }
+  async handleListCommand(interaction: ChatInputCommandInteraction, correlationId?: string): Promise<void> {
+    const tracer = new CommandTracer('verified-list', correlationId);
+    tracer.checkpoint(6, 'handler_start', { invokerId: interaction.user.id });
 
-    const isAuthorized = await this.isOfficerOrAdmin(interaction);
-    if (!isAuthorized) {
-      await interaction.reply({
-        content: '❌ You do not have permission to view the verified list. Only administrators or configured Officers may use this.',
-        ephemeral: true,
-      });
-      return;
-    }
+    const deferred = await safeDeferReply(interaction, tracer, { ephemeral: true });
+    if (!deferred) return;
 
-    await interaction.deferReply({ ephemeral: true });
-
-    const filterTrusted = interaction.options.getBoolean('trusted');
-    const { trusted, untrusted } = await this.verificationManagementService.getFilteredLinks(guild);
-
-    const totalCount = trusted.length + untrusted.length;
-    let listToRender = [];
-    let isTrustedFlag = true;
-
-    if (filterTrusted === true) {
-      listToRender = trusted;
-      isTrustedFlag = true;
-    } else if (filterTrusted === false) {
-      listToRender = untrusted;
-      isTrustedFlag = false;
-    } else {
-      // Default to showing all, but we need to track if they are trusted for the display.
-      // Easiest way: combine them, but keeping the flag. We will just use combined list.
-      // But wait, fetchPageProfiles needs the trusted boolean.
-      // If no filter, we will handle it in the render logic by checking presence in trusted array.
-      listToRender = [...trusted, ...untrusted];
-    }
-
-    const totalPages = Math.max(1, Math.ceil(listToRender.length / 10));
-    let currentPage = 0;
-
-    const renderPage = async (page: number) => {
-      // Instead of passing a single boolean to fetchPageProfiles when combined,
-      // we can map the slice here to pass individual trusted status.
-      const start = page * 10;
-      const end = start + 10;
-      const slice = listToRender.slice(start, end);
-      
-      const pageData = await Promise.all(
-        slice.map(async (link) => {
-          const isUserTrusted = trusted.some((t) => t.discordId === link.discordId);
-          const data = await this.verificationManagementService.fetchPageProfiles([link], isUserTrusted, 0, 1);
-          return data[0];
-        })
-      );
-
-      const embed = new EmbedBuilder()
-        .setTitle('✅ Verified Users List')
-        .setColor('#D00000')
-        .setDescription(`**Stats Overview:**\n• Total Verified: **${totalCount}**\n• Trusted: **${trusted.length}**\n• Untrusted: **${untrusted.length}**`)
-        .setFooter({ text: `Egypt Roles Bot • Developed by El-Gaiiar | Page ${page + 1} of ${totalPages} • Filter: ${filterTrusted !== null ? (filterTrusted ? 'Trusted Only' : 'Untrusted Only') : 'None'}` });
-
-      if (pageData.length === 0) {
-        embed.addFields({ name: 'No users found', value: 'There are no users matching this filter.' });
+    try {
+      const guild = interaction.guild;
+      if (!guild) {
+        await safeEditReply(interaction, tracer, { content: '❌ This command must be run inside a guild.' });
+        tracer.complete('no_guild');
+        return;
       }
 
-      for (const item of pageData) {
-        const { link, profile, isTrusted } = item;
-        const member = guild.members.cache.get(link.discordId);
-        const nameStr = member ? `**${member.user.tag}** (<@${link.discordId}>)` : `*Unknown* (<@${link.discordId}>)`;
-        
-        let valStr = `**WarEra Username:** ${link.wareraUsername}\n`;
-        valStr += `**Status:** ${isTrusted ? '🟢 Trusted' : '🔴 Untrusted'}\n`;
-        
-        if (profile) {
-          const spec = this.verificationManagementService.getSpecialization(profile);
-          valStr += `**Level:** ${profile.leveling?.level || 0} | **MU:** ${profile.mu || 'None'} | **Spec:** ${spec}\n`;
-        } else {
-          valStr += `*Could not fetch WarEra profile data.*\n`;
-        }
-        valStr += `**Verified:** <t:${Math.floor(link.verifiedAt.getTime() / 1000)}:R>`;
-
-        embed.addFields({ name: nameStr, value: valStr });
+      const isAuthorized = await this.isOfficerOrAdmin(interaction);
+      if (!isAuthorized) {
+        await safeEditReply(interaction, tracer, {
+          content: '❌ You do not have permission to view the verified list. Only administrators or configured Officers may use this.',
+        });
+        tracer.complete('unauthorized');
+        return;
       }
 
-      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-          .setCustomId('prev_page')
-          .setLabel('Previous')
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(page === 0),
-        new ButtonBuilder()
-          .setCustomId('next_page')
-          .setLabel('Next')
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(page === totalPages - 1 || totalPages === 0)
-      );
+      tracer.checkpoint(9, 'work_start');
+      const filterTrusted = interaction.options.getBoolean('trusted');
+      const { trusted, untrusted } = await this.verificationManagementService.getFilteredLinks(guild);
 
-      return { embed, row };
-    };
+      const totalCount = trusted.length + untrusted.length;
+      let listToRender = [];
+      let isTrustedFlag = true;
 
-    const initialPage = await renderPage(currentPage);
-    const message = await interaction.editReply({ embeds: [initialPage.embed], components: [initialPage.row] });
+      if (filterTrusted === true) {
+        listToRender = trusted;
+        isTrustedFlag = true;
+      } else if (filterTrusted === false) {
+        listToRender = untrusted;
+        isTrustedFlag = false;
+      } else {
+        listToRender = [...trusted, ...untrusted];
+      }
 
-    if (totalPages > 1) {
-      const collector = message.createMessageComponentCollector({
-        componentType: ComponentType.Button,
-        time: 300000, // 5 minutes
-      });
+      const totalPages = Math.max(1, Math.ceil(listToRender.length / 10));
+      let currentPage = 0;
 
-      collector.on('collect', async (i) => {
-        if (i.user.id !== interaction.user.id) {
-          await i.reply({ content: 'You cannot use these buttons.', ephemeral: true });
-          return;
-        }
-        await i.deferUpdate();
-
-        if (i.customId === 'prev_page' && currentPage > 0) currentPage--;
-        if (i.customId === 'next_page' && currentPage < totalPages - 1) currentPage++;
-
-        const newPage = await renderPage(currentPage);
-        await interaction.editReply({ embeds: [newPage.embed], components: [newPage.row] });
-      });
-
-      collector.on('end', async () => {
-        const disabledRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-          new ButtonBuilder().setCustomId('prev_page').setLabel('Previous').setStyle(ButtonStyle.Secondary).setDisabled(true),
-          new ButtonBuilder().setCustomId('next_page').setLabel('Next').setStyle(ButtonStyle.Secondary).setDisabled(true)
+      const renderPage = async (page: number) => {
+        const start = page * 10;
+        const end = start + 10;
+        const slice = listToRender.slice(start, end);
+        
+        const pageData = await Promise.all(
+          slice.map(async (link) => {
+            const isUserTrusted = trusted.some((t) => t.discordId === link.discordId);
+            const data = await this.verificationManagementService.fetchPageProfiles([link], isUserTrusted, 0, 1);
+            return data[0];
+          })
         );
-        await interaction.editReply({ components: [disabledRow] }).catch(() => null);
-      });
+
+        const embed = new EmbedBuilder()
+          .setTitle('✅ Verified Users List')
+          .setColor('#D00000')
+          .setDescription(`**Stats Overview:**\n• Total Verified: **${totalCount}**\n• Trusted: **${trusted.length}**\n• Untrusted: **${untrusted.length}**`)
+          .setFooter({ text: `Egypt Roles Bot • Developed by El-Gaiiar | Page ${page + 1} of ${totalPages} • Filter: ${filterTrusted !== null ? (filterTrusted ? 'Trusted Only' : 'Untrusted Only') : 'None'}` });
+
+        if (pageData.length === 0) {
+          embed.addFields({ name: 'No users found', value: 'There are no users matching this filter.' });
+        }
+
+        for (const item of pageData) {
+          const { link, profile, isTrusted } = item;
+          const member = guild.members.cache.get(link.discordId);
+          const nameStr = member ? `**${member.user.tag}** (<@${link.discordId}>)` : `*Unknown* (<@${link.discordId}>)`;
+          
+          let valStr = `**WarEra Username:** ${link.wareraUsername}\n`;
+          valStr += `**Status:** ${isTrusted ? '🟢 Trusted' : '🔴 Untrusted'}\n`;
+          
+          if (profile) {
+            const spec = this.verificationManagementService.getSpecialization(profile);
+            valStr += `**Level:** ${profile.leveling?.level || 0} | **MU:** ${profile.mu || 'None'} | **Spec:** ${spec}\n`;
+          } else {
+            valStr += `*Could not fetch WarEra profile data.*\n`;
+          }
+          valStr += `**Verified:** <t:${Math.floor(link.verifiedAt.getTime() / 1000)}:R>`;
+
+          embed.addFields({ name: nameStr, value: valStr });
+        }
+
+        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId('prev_page')
+            .setLabel('Previous')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(page === 0),
+          new ButtonBuilder()
+            .setCustomId('next_page')
+            .setLabel('Next')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(page === totalPages - 1 || totalPages === 0)
+        );
+
+        return { embed, row };
+      };
+
+      const initialPage = await renderPage(currentPage);
+      tracer.checkpoint(9, 'work_complete');
+      await safeEditReply(interaction, tracer, { embeds: [initialPage.embed], components: [initialPage.row] });
+      tracer.complete('success');
+
+      if (totalPages > 1) {
+        // Fetch original reply message to attach component collector
+        const replyMessage = await interaction.fetchReply().catch(() => null);
+        if (replyMessage) {
+          const collector = replyMessage.createMessageComponentCollector({
+            componentType: ComponentType.Button,
+            time: 300000, // 5 minutes
+          });
+
+          collector.on('collect', async (i) => {
+            try {
+              if (i.user.id !== interaction.user.id) {
+                await i.reply({ content: 'You cannot use these buttons.', ephemeral: true });
+                return;
+              }
+              await i.deferUpdate();
+
+              if (i.customId === 'prev_page' && currentPage > 0) currentPage--;
+              if (i.customId === 'next_page' && currentPage < totalPages - 1) currentPage++;
+
+              const newPage = await renderPage(currentPage);
+              await interaction.editReply({ embeds: [newPage.embed], components: [newPage.row] });
+            } catch (collectorErr) {
+              logger.error({ correlationId: tracer.correlationId, err: collectorErr }, 'Error during verified-list pagination collector');
+            }
+          });
+
+          collector.on('end', async () => {
+            try {
+              const disabledRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+                new ButtonBuilder().setCustomId('prev_page').setLabel('Previous').setStyle(ButtonStyle.Secondary).setDisabled(true),
+                new ButtonBuilder().setCustomId('next_page').setLabel('Next').setStyle(ButtonStyle.Secondary).setDisabled(true)
+              );
+              await interaction.editReply({ components: [disabledRow] });
+            } catch (err) {
+              logger.debug({ correlationId: tracer.correlationId, err }, 'Failed to disable verified-list buttons on collector end');
+            }
+          });
+        }
+      }
+    } catch (err) {
+      tracer.errorCheckpoint(9, 'work_error', err);
+      tracer.complete('error');
+      await safeEditReply(interaction, tracer, { content: `❌ Error fetching verified list: ${(err as Error).message}` });
     }
   }
 
-  async handleExportCommand(interaction: ChatInputCommandInteraction): Promise<void> {
-    const guild = interaction.guild;
-    if (!guild) {
-      await interaction.reply({ content: '❌ This command must be run inside a guild.', ephemeral: true });
-      return;
-    }
+  async handleExportCommand(interaction: ChatInputCommandInteraction, correlationId?: string): Promise<void> {
+    const tracer = new CommandTracer('verified-export', correlationId);
+    tracer.checkpoint(6, 'handler_start', { invokerId: interaction.user.id });
 
-    const member = interaction.member as GuildMember;
-    if (!member || !member.permissions.has(PermissionFlagsBits.Administrator)) {
-      await interaction.reply({ content: '❌ You must be an Administrator to export the verified users list.', ephemeral: true });
-      return;
-    }
-
-    await interaction.deferReply({ ephemeral: true });
-    await interaction.editReply({ content: '🔄 Generating CSV export. This may take a minute depending on the number of verified users...' });
+    const deferred = await safeDeferReply(interaction, tracer, { ephemeral: true });
+    if (!deferred) return;
 
     try {
+      const guild = interaction.guild;
+      if (!guild) {
+        await safeEditReply(interaction, tracer, { content: '❌ This command must be run inside a guild.' });
+        tracer.complete('no_guild');
+        return;
+      }
+
+      const member = interaction.member as GuildMember;
+      if (!member || !member.permissions.has(PermissionFlagsBits.Administrator)) {
+        await safeEditReply(interaction, tracer, { content: '❌ You must be an Administrator to export the verified users list.' });
+        tracer.complete('unauthorized');
+        return;
+      }
+
+      await safeEditReply(interaction, tracer, { content: '🔄 Generating CSV export. This may take a minute depending on the number of verified users...' });
+
+      tracer.checkpoint(9, 'work_start');
       const csvData = await this.verificationManagementService.generateCsvExport(guild);
       const buffer = Buffer.from(csvData, 'utf-8');
       const attachment = new AttachmentBuilder(buffer, { name: 'verified_users_export.csv' });
 
-      await interaction.editReply({
+      tracer.checkpoint(9, 'work_complete');
+      await safeEditReply(interaction, tracer, {
         content: '✅ Export complete. See the attached CSV file.',
         files: [attachment]
       });
+      tracer.complete('success');
     } catch (err) {
-      logger.error({ err }, 'Failed to generate verified users export');
-      await interaction.editReply({ content: `❌ Failed to generate export: ${(err as Error).message}` }).catch(() => null);
+      tracer.errorCheckpoint(9, 'work_error', err);
+      tracer.complete('error');
+      await safeEditReply(interaction, tracer, { content: `❌ Failed to generate export: ${(err as Error).message}` });
     }
   }
 }

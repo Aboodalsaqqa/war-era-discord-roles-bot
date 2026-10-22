@@ -8,6 +8,7 @@ export interface ProfileTraceMetadata {
  * Structured diagnostic tracer for the /profile command lifecycle.
  * Emits uniform log lines in the format:
  * [PROFILE_TRACE] requestId=... stage=... event=start|complete|error durationMs=...
+ * and tags the 10 standard lifecycle checkpoints.
  */
 export class ProfileTracer {
   readonly requestId: string;
@@ -36,7 +37,12 @@ export class ProfileTracer {
   startStage(stage: string, metadata?: ProfileTraceMetadata): void {
     this.stageStarts.set(stage, Date.now());
     const metaStr = this.formatMetadata(metadata);
-    logger.info(`[PROFILE_TRACE] requestId=${this.requestId} stage=${stage} event=start${metaStr}`);
+    let checkpointTag = '';
+    if (stage === 'command_init') checkpointTag = ' [CHECKPOINT_6_HANDLER_START]';
+    if (stage === 'interaction_defer') checkpointTag = ' [CHECKPOINT_7_DEFER_START]';
+    if (stage === 'discord_edit_reply') checkpointTag = ' [CHECKPOINT_10_REPLY_START]';
+
+    logger.info(`[PROFILE_TRACE]${checkpointTag} requestId=${this.requestId} stage=${stage} event=start${metaStr}`);
   }
 
   endStage(stage: string, metadata?: ProfileTraceMetadata): number {
@@ -44,7 +50,11 @@ export class ProfileTracer {
     const durationMs = started !== undefined ? Date.now() - started : 0;
     this.stageStarts.delete(stage);
     const metaStr = this.formatMetadata(metadata);
-    logger.info(`[PROFILE_TRACE] requestId=${this.requestId} stage=${stage} event=complete durationMs=${durationMs}${metaStr}`);
+    let checkpointTag = '';
+    if (stage === 'interaction_defer') checkpointTag = ' [CHECKPOINT_8_DEFER_RESULT status=success]';
+    if (stage === 'discord_edit_reply') checkpointTag = ' [CHECKPOINT_10_REPLY_RESULT status=success]';
+
+    logger.info(`[PROFILE_TRACE]${checkpointTag} requestId=${this.requestId} stage=${stage} event=complete durationMs=${durationMs}${metaStr}`);
     return durationMs;
   }
 
@@ -54,8 +64,12 @@ export class ProfileTracer {
     this.stageStarts.delete(stage);
     const errMessage = error instanceof Error ? error.message : String(error);
     const metaStr = this.formatMetadata(metadata);
+    let checkpointTag = '';
+    if (stage === 'interaction_defer') checkpointTag = ' [CHECKPOINT_8_DEFER_RESULT status=failed]';
+    if (stage === 'discord_edit_reply') checkpointTag = ' [CHECKPOINT_10_REPLY_RESULT status=failed]';
+
     logger.error(
-      `[PROFILE_TRACE] requestId=${this.requestId} stage=${stage} event=error durationMs=${durationMs} error="${errMessage}"${metaStr}`
+      `[PROFILE_TRACE]${checkpointTag} requestId=${this.requestId} stage=${stage} event=error durationMs=${durationMs} error="${errMessage}"${metaStr}`
     );
     return durationMs;
   }

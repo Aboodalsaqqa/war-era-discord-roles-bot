@@ -9,6 +9,7 @@ import {
 import { MuRoleRepository } from '../repositories/muRole.repository';
 import { WarEraService } from '../warera/service';
 import { logger } from '../utils/logger';
+import { CommandTracer, safeDeferReply, safeEditReply } from '../utils/commandTracer';
 
 export class AuditCommands {
   constructor(
@@ -19,17 +20,22 @@ export class AuditCommands {
   /**
    * Handler for /mu-audit
    */
-  async muAudit(interaction: ChatInputCommandInteraction): Promise<void> {
+  async muAudit(interaction: ChatInputCommandInteraction, correlationId?: string): Promise<void> {
+    const tracer = new CommandTracer('mu-audit', correlationId);
+    tracer.checkpoint(6, 'handler_start', { invokerId: interaction.user.id });
+
     const guild = interaction.guild;
     if (!guild) {
       await interaction.reply({ content: '❌ This command must be run inside a guild.', ephemeral: true });
       return;
     }
 
-    logger.info({ adminId: interaction.user.id }, 'Executing /mu-audit');
-    await interaction.deferReply({ ephemeral: true });
+    logger.info({ correlationId: tracer.correlationId, adminId: interaction.user.id }, 'Executing /mu-audit');
+    const deferred = await safeDeferReply(interaction, tracer, { ephemeral: true });
+    if (!deferred) return;
 
     try {
+      tracer.checkpoint(9, 'work_start');
       // 1. Fetch all Egypt MUs from WarEra API and sort alphabetically
       const egyptMus = await this.wareraService.getAllEgyptMus();
       egyptMus.sort((a, b) => a.name.localeCompare(b.name));
@@ -223,12 +229,14 @@ export class AuditCommands {
       });
 
       collector.on('end', async () => {
-        await interaction.editReply({ components: [] }).catch(() => null);
+        await safeEditReply(interaction, tracer, { components: [] });
       });
 
+      tracer.checkpoint(9, 'work_complete');
     } catch (error) {
-      logger.error({ error: (error as Error).message }, 'Error in muAudit command');
-      await interaction.editReply({ content: `❌ An error occurred during the MU Audit: ${(error as Error).message}` }).catch(() => null);
+      tracer.errorCheckpoint(9, 'work_error', error);
+      logger.error({ correlationId: tracer.correlationId, error: (error as Error).message }, 'Error in muAudit command');
+      await safeEditReply(interaction, tracer, { content: `❌ An error occurred during the MU Audit: ${(error as Error).message}` });
     }
   }
 }

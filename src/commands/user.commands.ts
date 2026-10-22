@@ -14,6 +14,7 @@ import { logger } from '../utils/logger';
 import { prisma } from '../database';
 import { UserGetUserLiteResponse } from '../types/Responses';
 import { ProfileTracer } from '../utils/profileTracer';
+import { CommandTracer, safeDeferReply, safeEditReply } from '../utils/commandTracer';
 
 export class UserCommands {
   constructor(
@@ -25,19 +26,25 @@ export class UserCommands {
   /**
    * Handler for /verify
    */
-  async verify(interaction: ChatInputCommandInteraction): Promise<void> {
+  async verify(interaction: ChatInputCommandInteraction, correlationId?: string): Promise<void> {
+    const tracer = new CommandTracer('verify', correlationId);
+    tracer.checkpoint(6, 'handler_start', { invokerId: interaction.user.id });
+
     const username = interaction.options.getString('username', true);
     const discordId = interaction.user.id;
 
-    logger.info({ discordId, username }, 'Received /verify command');
+    logger.info({ correlationId: tracer.correlationId, discordId, username }, 'Received /verify command');
 
-    await interaction.deferReply({ ephemeral: true });
+    const deferred = await safeDeferReply(interaction, tracer, { ephemeral: true });
+    if (!deferred) return;
 
     try {
+      tracer.checkpoint(9, 'work_start', { username, discordId });
       const result = await this.verificationService.startVerification(discordId, username);
+      tracer.checkpoint(9, 'work_complete', { status: result.status });
 
       if (result.status === 'not_found') {
-        await interaction.editReply({
+        await safeEditReply(interaction, tracer, {
           content: `❌ Could not find any WarEra player matching **${username}**. Please verify the spelling and try again.`,
         });
         return;
@@ -45,18 +52,26 @@ export class UserCommands {
 
       if (result.status === 'success') {
         const { profile, userLink } = result;
-        await interaction.editReply({
+        await safeEditReply(interaction, tracer, {
           content: `🔄 Account linked successfully! Syncing your roles for **${profile.username}**...`,
         });
 
         // Run sync immediately
         const member = interaction.member as GuildMember;
         if (member && interaction.guild) {
-          await this.roleSyncService.syncMember(interaction.guild, member, userLink);
-          await interaction.followUp({
-            content: `✅ Done! Verified and synced roles for **${profile.username}** (Level ${profile.leveling?.level || 0}).`,
-            ephemeral: true,
-          });
+          try {
+            await this.roleSyncService.syncMember(interaction.guild, member, userLink);
+            await interaction.followUp({
+              content: `✅ Done! Verified and synced roles for **${profile.username}** (Level ${profile.leveling?.level || 0}).`,
+              ephemeral: true,
+            });
+          } catch (syncErr) {
+            logger.error({ correlationId: tracer.correlationId, error: (syncErr as Error).message }, 'Failed to sync member roles after verification');
+            await interaction.followUp({
+              content: `✅ Account linked as **${profile.username}**, but role sync encountered an issue. Admins can run \`/sync\` to refresh roles.`,
+              ephemeral: true,
+            });
+          }
         } else {
           await interaction.followUp({
             content: `✅ Account linked successfully as **${profile.username}**, but role sync could not run because this command was not executed in a Discord server.`,
@@ -81,12 +96,15 @@ export class UserCommands {
 
         const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
 
-        const reply = await interaction.editReply({
+        await safeEditReply(interaction, tracer, {
           content: '⚠️ Multiple players matched your search. Please select your exact profile from the menu below:',
           components: [row],
         });
 
         // Collect selection
+        const reply = await interaction.fetchReply().catch(() => null);
+        if (!reply) return;
+
         const collector = reply.createMessageComponentCollector({
           componentType: ComponentType.StringSelect,
           time: 60000,
@@ -117,7 +135,7 @@ export class UserCommands {
             selectedProfile.username
           );
 
-          await menuInteraction.editReply({
+          await safeEditReply(interaction, tracer, {
             content: `🔄 Profile **${selectedProfile.username}** selected. Linking and syncing roles...`,
             components: [],
           });
@@ -131,7 +149,7 @@ export class UserCommands {
                 ephemeral: true,
               });
             } catch (syncErr) {
-              logger.error({ error: (syncErr as Error).message }, 'Failed to sync member roles after menu selection');
+              logger.error({ correlationId: tracer.correlationId, error: (syncErr as Error).message }, 'Failed to sync member roles after menu selection');
               await menuInteraction.followUp({
                 content: `✅ Account linked as **${selectedProfile.username}**, but role sync encountered an issue. Admins can run \`/sync\` to refresh roles.`,
                 ephemeral: true,
@@ -147,19 +165,20 @@ export class UserCommands {
         });
 
         collector.on('end', async (collected, reason) => {
-          if (reason === 'time') {
-            await interaction.editReply({
+          if (reason === 'time' && collected.size === 0) {
+            await safeEditReply(interaction, tracer, {
               content: '❌ Verification timed out. Please run the `/verify` command again.',
               components: [],
-            }).catch(() => null);
+            });
           }
         });
       }
     } catch (error) {
-      logger.error({ error: (error as Error).message, discordId, username }, 'Error executing verify command');
-      await interaction.editReply({
+      tracer.errorCheckpoint(9, 'work_error', error);
+      logger.error({ correlationId: tracer.correlationId, error: (error as Error).message, discordId, username }, 'Error executing verify command');
+      await safeEditReply(interaction, tracer, {
         content: `❌ Verification failed due to an API or database error. Message: ${(error as Error).message}`,
-      }).catch(() => null);
+      });
     }
   }
 
@@ -317,8 +336,8 @@ export class UserCommands {
   /**
    * Handler for /profile
    */
-  async profile(interaction: ChatInputCommandInteraction): Promise<void> {
-    const tracer = new ProfileTracer();
+  async profile(interaction: ChatInputCommandInteraction, correlationId?: string): Promise<void> {
+    const tracer = new ProfileTracer(correlationId);
     tracer.startStage('command_init', {
       invokerId: interaction.user.id,
       guildId: interaction.guildId ?? 'dm',
@@ -548,7 +567,10 @@ export class UserCommands {
   /**
    * Handler for /sync-me
    */
-  async syncMe(interaction: ChatInputCommandInteraction): Promise<void> {
+  async syncMe(interaction: ChatInputCommandInteraction, correlationId?: string): Promise<void> {
+    const tracer = new CommandTracer('sync-me', correlationId);
+    tracer.checkpoint(6, 'handler_start', { invokerId: interaction.user.id });
+
     const discordId = interaction.user.id;
     const member = interaction.member as GuildMember;
 
@@ -560,26 +582,30 @@ export class UserCommands {
       return;
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    const deferred = await safeDeferReply(interaction, tracer, { ephemeral: true });
+    if (!deferred) return;
 
     try {
+      tracer.checkpoint(9, 'work_start', { discordId });
       const userLink = await this.verificationService.getLinkByDiscordId(discordId);
       if (!userLink) {
-        await interaction.editReply({
+        await safeEditReply(interaction, tracer, {
           content: '❌ Your Discord account is not linked. Use `/verify <username>` to verify first.',
         });
         return;
       }
 
       await this.roleSyncService.syncMember(interaction.guild, member, userLink);
-      await interaction.editReply({
+      tracer.checkpoint(9, 'work_complete');
+      await safeEditReply(interaction, tracer, {
         content: `✅ Your roles have been synchronized based on your latest WarEra stats!`,
       });
     } catch (error) {
-      logger.error({ error: (error as Error).message, discordId }, 'Error running /sync-me');
-      await interaction.editReply({
+      tracer.errorCheckpoint(9, 'work_error', error);
+      logger.error({ correlationId: tracer.correlationId, error: (error as Error).message, discordId }, 'Error running /sync-me');
+      await safeEditReply(interaction, tracer, {
         content: `❌ Sync failed: ${(error as Error).message}`,
-      }).catch(() => null);
+      });
     }
   }
 }

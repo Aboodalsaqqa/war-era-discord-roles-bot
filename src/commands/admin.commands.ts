@@ -14,6 +14,7 @@ import { MuRoleRepository } from '../repositories/muRole.repository';
 import { LevelRoleRepository } from '../repositories/levelRole.repository';
 import { UserLinkRepository } from '../repositories/userLink.repository';
 import { logger } from '../utils/logger';
+import { CommandTracer, safeDeferReply, safeEditReply } from '../utils/commandTracer';
 
 export const FORCE_VERIFY_MODERATOR_ROLE_ID = '1500579625405780129';
 export const FORCE_VERIFY_EDUCATION_STAFF_ROLE_ID = '1477944138887331882';
@@ -119,7 +120,10 @@ export class AdminCommands {
   /**
    * Handler for /forceverify <user> <username>
    */
-  async forceVerify(interaction: ChatInputCommandInteraction): Promise<void> {
+  async forceVerify(interaction: ChatInputCommandInteraction, correlationId?: string): Promise<void> {
+    const tracer = new CommandTracer('forceverify', correlationId);
+    tracer.checkpoint(6, 'handler_start', { invokerId: interaction.user.id });
+
     const targetUser = interaction.options.getUser('user', true);
     const username = interaction.options.getString('username', true);
     const guild = interaction.guild;
@@ -138,14 +142,17 @@ export class AdminCommands {
       return;
     }
 
-    logger.info({ invokerId: interaction.user.id, targetId: targetUser.id, username }, '/forceverify triggered');
-    await interaction.deferReply({ ephemeral: true });
+    logger.info({ correlationId: tracer.correlationId, invokerId: interaction.user.id, targetId: targetUser.id, username }, '/forceverify triggered');
+    const deferred = await safeDeferReply(interaction, tracer, { ephemeral: true });
+    if (!deferred) return;
 
     try {
+      tracer.checkpoint(9, 'work_start', { targetId: targetUser.id, targetUsername: username });
       const result = await this.verificationService.startVerification(targetUser.id, username);
 
       if (result.status === 'not_found') {
-        await interaction.editReply({
+        tracer.checkpoint(9, 'work_complete', { status: 'not_found' });
+        await safeEditReply(interaction, tracer, {
           content: `❌ Could not find any WarEra player matching **${username}** for force-verification.`,
         });
         return;
@@ -153,21 +160,27 @@ export class AdminCommands {
 
       if (result.status === 'success') {
         const { profile, userLink } = result;
-        await interaction.editReply({
+        await safeEditReply(interaction, tracer, {
           content: `🔄 Link created for <@${targetUser.id}> as **${profile.username}**. Running role sync...`,
         });
 
         const member = await guild.members.fetch({ user: targetUser.id, force: true }).catch(() => null);
         if (member) {
           await this.roleSyncService.syncMember(guild, member, userLink);
+          tracer.checkpoint(9, 'work_complete', { status: 'success' });
           await interaction.followUp({
             content: `✅ Successfully force-verified and synced roles for <@${targetUser.id}> as **${profile.username}** (Level ${profile.leveling?.level || 0}).`,
             ephemeral: true,
+          }).catch((err) => {
+            logger.error({ correlationId: tracer.correlationId, error: (err as Error).message }, 'Failed to send followUp in forceverify');
           });
         } else {
+          tracer.checkpoint(9, 'work_complete', { status: 'success_not_in_server' });
           await interaction.followUp({
             content: `✅ Link created for <@${targetUser.id}> as **${profile.username}**, but role sync could not run because they are not a member of this server.`,
             ephemeral: true,
+          }).catch((err) => {
+            logger.error({ correlationId: tracer.correlationId, error: (err as Error).message }, 'Failed to send followUp in forceverify');
           });
         }
         return;
@@ -243,15 +256,19 @@ export class AdminCommands {
         });
       }
     } catch (error) {
-      logger.error({ error: (error as Error).message, targetUserId: targetUser.id }, 'Error forceVerify');
-      await interaction.editReply({ content: `❌ Force verify failed: ${(error as Error).message}` }).catch(() => null);
+      tracer.errorCheckpoint(9, 'work_error', error);
+      logger.error({ correlationId: tracer.correlationId, error: (error as Error).message, targetUserId: targetUser.id }, 'Error forceVerify');
+      await safeEditReply(interaction, tracer, { content: `❌ Force verify failed: ${(error as Error).message}` });
     }
   }
 
   /**
    * Handler for /unverify <user>
    */
-  async unVerify(interaction: ChatInputCommandInteraction): Promise<void> {
+  async unVerify(interaction: ChatInputCommandInteraction, correlationId?: string): Promise<void> {
+    const tracer = new CommandTracer('unverify', correlationId);
+    tracer.checkpoint(6, 'handler_start', { invokerId: interaction.user.id });
+
     const targetUser = interaction.options.getUser('user', true);
     const guild = interaction.guild;
 
@@ -260,13 +277,16 @@ export class AdminCommands {
       return;
     }
 
-    logger.info({ adminId: interaction.user.id, targetId: targetUser.id }, 'Admin /unverify triggered');
-    await interaction.deferReply({ ephemeral: true });
+    logger.info({ correlationId: tracer.correlationId, adminId: interaction.user.id, targetId: targetUser.id }, 'Admin /unverify triggered');
+    const deferred = await safeDeferReply(interaction, tracer, { ephemeral: true });
+    if (!deferred) return;
 
     try {
+      tracer.checkpoint(9, 'work_start', { targetId: targetUser.id });
       const userLink = await this.verificationService.getLinkByDiscordId(targetUser.id);
       if (!userLink) {
-        await interaction.editReply({ content: `❌ <@${targetUser.id}> is not linked to any WarEra profile.` });
+        tracer.checkpoint(9, 'work_complete', { status: 'not_linked' });
+        await safeEditReply(interaction, tracer, { content: `❌ <@${targetUser.id}> is not linked to any WarEra profile.` });
         return;
       }
 
@@ -307,29 +327,35 @@ export class AdminCommands {
         for (const roleId of rolesToRemove) {
           if (guild.roles.cache.has(roleId)) {
             await member.roles.remove(roleId).catch((err) =>
-              logger.warn({ roleId, targetId: targetUser.id, error: err.message }, 'Failed to remove role on unverify')
+              logger.warn({ correlationId: tracer.correlationId, roleId, targetId: targetUser.id, error: err.message }, 'Failed to remove role on unverify')
             );
           }
         }
 
-        await interaction.editReply({
+        tracer.checkpoint(9, 'work_complete', { status: 'unverified_roles_removed', count: rolesToRemove.length });
+        await safeEditReply(interaction, tracer, {
           content: `✅ Unverified <@${targetUser.id}> (removed link and stripped ${rolesToRemove.length} bot-managed roles).`,
         });
       } else {
-        await interaction.editReply({
+        tracer.checkpoint(9, 'work_complete', { status: 'unverified_no_member' });
+        await safeEditReply(interaction, tracer, {
           content: `✅ Unverified <@${targetUser.id}> (removed database link, but could not strip roles as they are not currently in this server).`,
         });
       }
     } catch (error) {
-      logger.error({ error: (error as Error).message, targetUserId: targetUser.id }, 'Error unVerify');
-      await interaction.editReply({ content: `❌ Unverify failed: ${(error as Error).message}` }).catch(() => null);
+      tracer.errorCheckpoint(9, 'work_error', error);
+      logger.error({ correlationId: tracer.correlationId, error: (error as Error).message, targetUserId: targetUser.id }, 'Error unVerify');
+      await safeEditReply(interaction, tracer, { content: `❌ Unverify failed: ${(error as Error).message}` });
     }
   }
 
   /**
    * Handler for /sync <user>
    */
-  async sync(interaction: ChatInputCommandInteraction): Promise<void> {
+  async sync(interaction: ChatInputCommandInteraction, correlationId?: string): Promise<void> {
+    const tracer = new CommandTracer('sync', correlationId);
+    tracer.checkpoint(6, 'handler_start', { invokerId: interaction.user.id });
+
     const targetUser = interaction.options.getUser('user', true);
     const guild = interaction.guild;
 
@@ -338,34 +364,43 @@ export class AdminCommands {
       return;
     }
 
-    logger.info({ adminId: interaction.user.id, targetId: targetUser.id }, 'Admin /sync triggered');
-    await interaction.deferReply({ ephemeral: true });
+    logger.info({ correlationId: tracer.correlationId, adminId: interaction.user.id, targetId: targetUser.id }, 'Admin /sync triggered');
+    const deferred = await safeDeferReply(interaction, tracer, { ephemeral: true });
+    if (!deferred) return;
 
     try {
+      tracer.checkpoint(9, 'work_start', { targetId: targetUser.id });
       const userLink = await this.verificationService.getLinkByDiscordId(targetUser.id);
       if (!userLink) {
-        await interaction.editReply({ content: `❌ <@${targetUser.id}> is not verified/linked.` });
+        tracer.checkpoint(9, 'work_complete', { status: 'not_linked' });
+        await safeEditReply(interaction, tracer, { content: `❌ <@${targetUser.id}> is not verified/linked.` });
         return;
       }
 
       const member = await guild.members.fetch({ user: targetUser.id, force: true }).catch(() => null);
       if (!member) {
-        await interaction.editReply({ content: `❌ User is not a member of this server.` });
+        tracer.checkpoint(9, 'work_complete', { status: 'not_guild_member' });
+        await safeEditReply(interaction, tracer, { content: `❌ User is not a member of this server.` });
         return;
       }
 
       await this.roleSyncService.syncMember(guild, member, userLink);
-      await interaction.editReply({ content: `✅ Roles successfully synchronized for <@${targetUser.id}>.` });
+      tracer.checkpoint(9, 'work_complete', { status: 'success' });
+      await safeEditReply(interaction, tracer, { content: `✅ Roles successfully synchronized for <@${targetUser.id}>.` });
     } catch (error) {
-      logger.error({ error: (error as Error).message, targetUserId: targetUser.id }, 'Error sync command');
-      await interaction.editReply({ content: `❌ Sync failed: ${(error as Error).message}` }).catch(() => null);
+      tracer.errorCheckpoint(9, 'work_error', error);
+      logger.error({ correlationId: tracer.correlationId, error: (error as Error).message, targetUserId: targetUser.id }, 'Error sync command');
+      await safeEditReply(interaction, tracer, { content: `❌ Sync failed: ${(error as Error).message}` });
     }
   }
 
   /**
    * Handler for /syncall
    */
-  async syncAll(interaction: ChatInputCommandInteraction): Promise<void> {
+  async syncAll(interaction: ChatInputCommandInteraction, correlationId?: string): Promise<void> {
+    const tracer = new CommandTracer('sync-all', correlationId);
+    tracer.checkpoint(6, 'handler_start', { invokerId: interaction.user.id });
+
     const guild = interaction.guild;
 
     if (!guild) {
@@ -373,17 +408,20 @@ export class AdminCommands {
       return;
     }
 
-    logger.info({ adminId: interaction.user.id }, 'Admin /syncall triggered');
-    await interaction.deferReply();
+    logger.info({ correlationId: tracer.correlationId, adminId: interaction.user.id }, 'Admin /syncall triggered');
+    const deferred = await safeDeferReply(interaction, tracer, { ephemeral: false });
+    if (!deferred) return;
 
     try {
+      tracer.checkpoint(9, 'work_start');
       const allLinks = await this.userLinkRepo.listAll();
       if (allLinks.length === 0) {
-        await interaction.editReply({ content: '⚠️ There are no verified users in the database to sync.' });
+        tracer.checkpoint(9, 'work_complete', { status: 'empty' });
+        await safeEditReply(interaction, tracer, { content: '⚠️ There are no verified users in the database to sync.' });
         return;
       }
 
-      await interaction.editReply({ content: `🔄 Beginning synchronization for ${allLinks.length} linked players. Please wait...` });
+      await safeEditReply(interaction, tracer, { content: `🔄 Beginning synchronization for ${allLinks.length} linked players. Please wait...` });
 
       let successCount = 0;
       let failCount = 0;
@@ -395,21 +433,22 @@ export class AdminCommands {
             await this.roleSyncService.syncMember(guild, member, link);
             successCount++;
           } else {
-            // Member is not in this guild, skip without listing as "fail" (or increment skipped count)
             logger.debug({ guildId: guild.id, discordId: link.discordId }, 'Skipping syncall user: member not in guild');
           }
         } catch (err) {
-          logger.error({ discordId: link.discordId, error: (err as Error).message }, 'Failed to sync user in syncall');
+          logger.error({ correlationId: tracer.correlationId, discordId: link.discordId, error: (err as Error).message }, 'Failed to sync user in syncall');
           failCount++;
         }
       }
 
-      await interaction.editReply({
+      tracer.checkpoint(9, 'work_complete', { successCount, failCount });
+      await safeEditReply(interaction, tracer, {
         content: `✅ Synchronization complete!\n📊 **Results:**\n- Synced: \`${successCount}\` user(s)\n- Failed: \`${failCount}\` user(s)`,
       });
     } catch (error) {
-      logger.error({ error: (error as Error).message }, 'Error in syncAll');
-      await interaction.editReply({ content: `❌ Syncall failed: ${(error as Error).message}` }).catch(() => null);
+      tracer.errorCheckpoint(9, 'work_error', error);
+      logger.error({ correlationId: tracer.correlationId, error: (error as Error).message }, 'Error in syncAll');
+      await safeEditReply(interaction, tracer, { content: `❌ Syncall failed: ${(error as Error).message}` });
     }
   }
 }

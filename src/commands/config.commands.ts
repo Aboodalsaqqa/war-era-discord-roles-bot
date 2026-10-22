@@ -3,6 +3,7 @@ import { GuildConfigService } from '../services/guildConfig.service';
 import { MuRoleService } from '../services/muRole.service';
 import { LevelRoleRepository } from '../repositories/levelRole.repository';
 import { logger } from '../utils/logger';
+import { CommandTracer, safeDeferReply, safeEditReply } from '../utils/commandTracer';
 
 export class ConfigCommands {
   constructor(
@@ -14,7 +15,10 @@ export class ConfigCommands {
   /**
    * Handler for /config <subcommand>
    */
-  async configureRoles(interaction: ChatInputCommandInteraction): Promise<void> {
+  async configureRoles(interaction: ChatInputCommandInteraction, correlationId?: string): Promise<void> {
+    const tracer = new CommandTracer('config', correlationId);
+    tracer.checkpoint(6, 'handler_start', { invokerId: interaction.user.id });
+
     const subcommand = interaction.options.getSubcommand(true);
     const role = interaction.options.getRole('role', true);
     const guildId = interaction.guildId;
@@ -24,10 +28,12 @@ export class ConfigCommands {
       return;
     }
 
-    logger.info({ guildId, subcommand, roleId: role.id }, 'Configuring role field');
-    await interaction.deferReply({ ephemeral: true });
+    logger.info({ correlationId: tracer.correlationId, guildId, subcommand, roleId: role.id }, 'Configuring role field');
+    const deferred = await safeDeferReply(interaction, tracer, { ephemeral: true });
+    if (!deferred) return;
 
     try {
+      tracer.checkpoint(9, 'work_start', { subcommand, roleId: role.id });
       let field: string;
       let fieldLabel: string;
 
@@ -40,7 +46,6 @@ export class ConfigCommands {
           field = 'officerRoleId';
           fieldLabel = '🛡️ Officer';
           break;
-
         case 'vice-president-role':
           field = 'vicePresidentRoleId';
           fieldLabel = '🎖️ Vice President';
@@ -78,18 +83,21 @@ export class ConfigCommands {
           fieldLabel = '⛺ No MU Yet';
           break;
         default:
-          await interaction.editReply({ content: '❌ Invalid configuration field.' });
+          tracer.checkpoint(9, 'work_complete', { outcome: 'invalid_field' });
+          await safeEditReply(interaction, tracer, { content: '❌ Invalid configuration field.' });
           return;
       }
 
       await this.guildConfigService.updateConfig(guildId, { [field]: role.id });
+      tracer.checkpoint(9, 'work_complete', { field, roleId: role.id });
 
-      await interaction.editReply({
+      await safeEditReply(interaction, tracer, {
         content: `✅ Successfully configured the **${fieldLabel}** role to <@&${role.id}> for this guild.`,
       });
     } catch (error) {
-      logger.error({ error: (error as Error).message, guildId, subcommand }, 'Failed in configureRoles');
-      await interaction.editReply({
+      tracer.errorCheckpoint(9, 'work_error', error);
+      logger.error({ correlationId: tracer.correlationId, error: (error as Error).message, guildId, subcommand }, 'Failed in configureRoles');
+      await safeEditReply(interaction, tracer, {
         content: `❌ Configuration failed: ${(error as Error).message}`,
       });
     }
@@ -98,7 +106,10 @@ export class ConfigCommands {
   /**
    * Handler for /mu-role <subcommand>
    */
-  async configureMuRoles(interaction: ChatInputCommandInteraction): Promise<void> {
+  async configureMuRoles(interaction: ChatInputCommandInteraction, correlationId?: string): Promise<void> {
+    const tracer = new CommandTracer('mu-role', correlationId);
+    tracer.checkpoint(6, 'handler_start', { invokerId: interaction.user.id });
+
     const subcommand = interaction.options.getSubcommand(true);
     const guildId = interaction.guildId;
 
@@ -107,14 +118,18 @@ export class ConfigCommands {
       return;
     }
 
-    logger.info({ guildId, subcommand }, 'Configuring MU roles');
+    logger.info({ correlationId: tracer.correlationId, guildId, subcommand }, 'Configuring MU roles');
 
     if (subcommand === 'list') {
-      await interaction.deferReply();
+      const deferred = await safeDeferReply(interaction, tracer, { ephemeral: false });
+      if (!deferred) return;
+
       try {
+        tracer.checkpoint(9, 'work_start', { action: 'list' });
         const mappings = await this.muRoleService.listMuRoles(guildId);
         if (mappings.length === 0) {
-          await interaction.editReply({ content: 'ℹ️ No Military Unit (MU) role mappings configured for this guild.' });
+          tracer.checkpoint(9, 'work_complete', { count: 0 });
+          await safeEditReply(interaction, tracer, { content: 'ℹ️ No Military Unit (MU) role mappings configured for this guild.' });
           return;
         }
 
@@ -129,42 +144,49 @@ export class ConfigCommands {
           .setTimestamp()
           .setFooter({ text: 'Egypt Roles Bot • Developed by El-Gaiiar' });
 
-        await interaction.editReply({ embeds: [embed] });
+        tracer.checkpoint(9, 'work_complete', { count: mappings.length });
+        await safeEditReply(interaction, tracer, { embeds: [embed] });
       } catch (error) {
-        logger.error({ error: (error as Error).message, guildId }, 'Error listing MU roles');
-        await interaction.editReply({ content: '❌ Failed to list MU roles.' }).catch(() => null);
+        tracer.errorCheckpoint(9, 'work_error', error);
+        logger.error({ correlationId: tracer.correlationId, error: (error as Error).message, guildId }, 'Error listing MU roles');
+        await safeEditReply(interaction, tracer, { content: '❌ Failed to list MU roles.' });
       }
       return;
     }
 
     // Add or Remove requires deferReply (ephemeral)
-    await interaction.deferReply({ ephemeral: true });
+    const deferred = await safeDeferReply(interaction, tracer, { ephemeral: true });
+    if (!deferred) return;
 
     try {
+      tracer.checkpoint(9, 'work_start', { action: subcommand });
       const muId = interaction.options.getString('mu-id', true);
 
       if (subcommand === 'add') {
         const role = interaction.options.getRole('role', true);
         const mapping = await this.muRoleService.addMuRole(guildId, muId, role.id);
 
-        await interaction.editReply({
+        tracer.checkpoint(9, 'work_complete', { action: 'add', muId, roleId: role.id });
+        await safeEditReply(interaction, tracer, {
           content: `✅ Mapped MU **${mapping.muName}** (ID: \`${muId}\`) to <@&${role.id}>.`,
         });
       } else if (subcommand === 'remove') {
         const deleted = await this.muRoleService.removeMuRole(guildId, muId);
+        tracer.checkpoint(9, 'work_complete', { action: 'remove', muId, found: !!deleted });
         if (deleted) {
-          await interaction.editReply({
+          await safeEditReply(interaction, tracer, {
             content: `✅ Removed MU role mapping for **${deleted.muName}** (ID: \`${muId}\`).`,
           });
         } else {
-          await interaction.editReply({
+          await safeEditReply(interaction, tracer, {
             content: `❌ No MU role mapping found for ID \`${muId}\`.`,
           });
         }
       }
     } catch (error) {
-      logger.error({ error: (error as Error).message, guildId, subcommand }, 'Error executing MU command');
-      await interaction.editReply({
+      tracer.errorCheckpoint(9, 'work_error', error);
+      logger.error({ correlationId: tracer.correlationId, error: (error as Error).message, guildId, subcommand }, 'Error executing MU command');
+      await safeEditReply(interaction, tracer, {
         content: `❌ MU configuration failed: ${(error as Error).message}`,
       });
     }
@@ -173,7 +195,10 @@ export class ConfigCommands {
   /**
    * Handler for /level-role <subcommand>
    */
-  async configureLevelRoles(interaction: ChatInputCommandInteraction): Promise<void> {
+  async configureLevelRoles(interaction: ChatInputCommandInteraction, correlationId?: string): Promise<void> {
+    const tracer = new CommandTracer('level-role', correlationId);
+    tracer.checkpoint(6, 'handler_start', { invokerId: interaction.user.id });
+
     const subcommand = interaction.options.getSubcommand(true);
     const guildId = interaction.guildId;
 
@@ -182,14 +207,18 @@ export class ConfigCommands {
       return;
     }
 
-    logger.info({ guildId, subcommand }, 'Configuring level roles');
+    logger.info({ correlationId: tracer.correlationId, guildId, subcommand }, 'Configuring level roles');
 
     if (subcommand === 'list') {
-      await interaction.deferReply();
+      const deferred = await safeDeferReply(interaction, tracer, { ephemeral: false });
+      if (!deferred) return;
+
       try {
+        tracer.checkpoint(9, 'work_start', { action: 'list' });
         const mappings = await this.levelRoleRepo.listByGuild(guildId);
         if (mappings.length === 0) {
-          await interaction.editReply({ content: 'ℹ️ No Level role mappings configured for this guild.' });
+          tracer.checkpoint(9, 'work_complete', { count: 0 });
+          await safeEditReply(interaction, tracer, { content: 'ℹ️ No Level role mappings configured for this guild.' });
           return;
         }
 
@@ -204,42 +233,49 @@ export class ConfigCommands {
           .setTimestamp()
           .setFooter({ text: 'Egypt Roles Bot • Developed by El-Gaiiar' });
 
-        await interaction.editReply({ embeds: [embed] });
+        tracer.checkpoint(9, 'work_complete', { count: mappings.length });
+        await safeEditReply(interaction, tracer, { embeds: [embed] });
       } catch (error) {
-        logger.error({ error: (error as Error).message, guildId }, 'Error listing level roles');
-        await interaction.editReply({ content: '❌ Failed to list Level roles.' }).catch(() => null);
+        tracer.errorCheckpoint(9, 'work_error', error);
+        logger.error({ correlationId: tracer.correlationId, error: (error as Error).message, guildId }, 'Error listing level roles');
+        await safeEditReply(interaction, tracer, { content: '❌ Failed to list Level roles.' });
       }
       return;
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    const deferred = await safeDeferReply(interaction, tracer, { ephemeral: true });
+    if (!deferred) return;
 
     try {
+      tracer.checkpoint(9, 'work_start', { action: subcommand });
       const minimumLevel = interaction.options.getInteger('minimum-level', true);
 
       if (subcommand === 'add') {
         const role = interaction.options.getRole('role', true);
-        await this.levelRoleRepo.upsertLevelRole(guildId, minimumLevel, role.id);
+        const mapping = await this.levelRoleRepo.upsertLevelRole(guildId, minimumLevel, role.id);
 
-        await interaction.editReply({
-          content: `✅ Mapped Level **${minimumLevel}+** to <@&${role.id}>.`,
+        tracer.checkpoint(9, 'work_complete', { action: 'add', minimumLevel, roleId: role.id });
+        await safeEditReply(interaction, tracer, {
+          content: `✅ Mapped **Level ${mapping.minimumLevel}+** to <@&${role.id}>.`,
         });
       } else if (subcommand === 'remove') {
         const deleted = await this.levelRoleRepo.deleteLevelRole(guildId, minimumLevel);
+        tracer.checkpoint(9, 'work_complete', { action: 'remove', minimumLevel, found: !!deleted });
         if (deleted) {
-          await interaction.editReply({
-            content: `✅ Removed Level role mapping for Level **${minimumLevel}**+.`,
+          await safeEditReply(interaction, tracer, {
+            content: `✅ Removed Level role mapping for **Level ${minimumLevel}+**.`,
           });
         } else {
-          await interaction.editReply({
-            content: `❌ No Level role mapping found for Level **${minimumLevel}**+.`,
+          await safeEditReply(interaction, tracer, {
+            content: `❌ No Level role mapping found for Level ${minimumLevel}.`,
           });
         }
       }
     } catch (error) {
-      logger.error({ error: (error as Error).message, guildId, subcommand }, 'Error executing Level command');
-      await interaction.editReply({
-        content: `❌ Level configuration failed: ${(error as Error).message}`,
+      tracer.errorCheckpoint(9, 'work_error', error);
+      logger.error({ correlationId: tracer.correlationId, error: (error as Error).message, guildId, subcommand }, 'Error executing Level command');
+      await safeEditReply(interaction, tracer, {
+        content: `❌ Level role configuration failed: ${(error as Error).message}`,
       });
     }
   }

@@ -6,19 +6,26 @@ import { generateGearCandidates } from '../optimizer/core/candidateGenerator';
 import { simulateCombat } from '../optimizer/simulation/combatSimulator';
 import { simulateEconomy } from '../optimizer/simulation/economySimulator';
 import { scoreResult, OptimizationMode } from '../optimizer/core/scoring';
+import { CommandTracer, safeDeferReply, safeEditReply } from '../utils/commandTracer';
 
 export class OptimizeCommands {
   constructor() {}
 
-  async handleOptimize(interaction: ChatInputCommandInteraction): Promise<void> {
-    await interaction.deferReply();
+  async handleOptimize(interaction: ChatInputCommandInteraction, correlationId?: string): Promise<void> {
+    const tracer = new CommandTracer('optimize', correlationId);
+    tracer.checkpoint(6, 'handler_start', { invokerId: interaction.user.id });
+
+    const deferred = await safeDeferReply(interaction, tracer, { ephemeral: false });
+    if (!deferred) return;
 
     const username = interaction.options.getString('username', true);
     const modeStr = interaction.options.getString('mode', true) as OptimizationMode;
 
-    logger.info({ username, mode: modeStr }, 'Running build optimizer');
+    logger.info({ correlationId: tracer.correlationId, username, mode: modeStr }, 'Running build optimizer');
 
     try {
+      tracer.checkpoint(9, 'work_start', { username, mode: modeStr });
+
       // 1. Fetch data
       const player = await fetchPlayerData(username);
       const market = await fetchMarketSnapshot();
@@ -28,7 +35,10 @@ export class OptimizeCommands {
       const candidates = generateGearCandidates(player, market, availableGear);
 
       if (candidates.length === 0) {
-        await interaction.editReply('❌ No valid gear combinations found within your budget or level requirements.');
+        tracer.checkpoint(9, 'work_complete', { outcome: 'no_candidates' });
+        await safeEditReply(interaction, tracer, {
+          content: '❌ No valid gear combinations found within your budget or level requirements.',
+        });
         return;
       }
 
@@ -53,7 +63,10 @@ export class OptimizeCommands {
       }
 
       if (!bestBuild) {
-        await interaction.editReply('❌ Failed to find an optimal build.');
+        tracer.checkpoint(9, 'work_complete', { outcome: 'no_optimal_build' });
+        await safeEditReply(interaction, tracer, {
+          content: '❌ Failed to find an optimal build.',
+        });
         return;
       }
 
@@ -71,11 +84,15 @@ export class OptimizeCommands {
         .setFooter({ text: 'Egypt Roles Bot • Developed by El-Gaiiar' })
         .setTimestamp();
 
-      await interaction.editReply({ embeds: [embed] });
+      tracer.checkpoint(9, 'work_complete', { outcome: 'success', bestScore });
+      await safeEditReply(interaction, tracer, { embeds: [embed] });
 
     } catch (error) {
-      logger.error({ error }, 'Error running optimizer command');
-      await interaction.editReply('❌ An error occurred while running the optimizer. Please try again later.').catch(() => null);
+      tracer.errorCheckpoint(9, 'work_error', error);
+      logger.error({ correlationId: tracer.correlationId, error }, 'Error running optimizer command');
+      await safeEditReply(interaction, tracer, {
+        content: '❌ An error occurred while running the optimizer. Please try again later.',
+      });
     }
   }
 }

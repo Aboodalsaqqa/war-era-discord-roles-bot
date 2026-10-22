@@ -2,6 +2,7 @@ import { ChatInputCommandInteraction, EmbedBuilder, GuildMember, PermissionFlags
 import { ReadinessService } from '../services/readiness.service';
 import { GuildConfigRepository } from '../repositories/guildConfig.repository';
 import { logger } from '../utils/logger';
+import { CommandTracer, safeDeferReply, safeEditReply } from '../utils/commandTracer';
 
 export class ReadinessCommands {
   constructor(
@@ -28,29 +29,34 @@ export class ReadinessCommands {
     return false;
   }
 
-  async handleCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+  async handleCommand(interaction: ChatInputCommandInteraction, correlationId?: string): Promise<void> {
+    const tracer = new CommandTracer('readiness', correlationId);
+    tracer.checkpoint(6, 'handler_start', { invokerId: interaction.user.id });
+
     const guildId = interaction.guildId;
 
-    if (!guildId) {
-      await interaction.reply({ content: '❌ This command must be run inside a guild.', ephemeral: true });
+    const deferred = await safeDeferReply(interaction, tracer, { ephemeral: false });
+    if (!deferred) return;
+
+    if (!guildId || !interaction.guild) {
+      await safeEditReply(interaction, tracer, { content: '❌ This command must be run inside a guild.' });
       return;
     }
 
     // Check Permissions
     const isAuthorized = await this.isOfficerOrAdmin(interaction);
     if (!isAuthorized) {
-      await interaction.reply({
+      await safeEditReply(interaction, tracer, {
         content: '❌ You do not have permission to view the Military Readiness Report.',
-        ephemeral: true,
       });
       return;
     }
 
-    logger.info({ guildId, userId: interaction.user.id }, 'Generating readiness report command');
-    await interaction.deferReply();
+    logger.info({ correlationId: tracer.correlationId, guildId, userId: interaction.user.id }, 'Generating readiness report command');
 
     try {
-      const report = await this.readinessService.generateReadinessReport(interaction.guild!);
+      tracer.checkpoint(9, 'work_start');
+      const report = await this.readinessService.generateReadinessReport(interaction.guild);
 
       const embed = new EmbedBuilder()
         .setTitle('🇪🇬 Egypt Ministry of Defense | Military Readiness Report')
@@ -105,12 +111,14 @@ export class ReadinessCommands {
         });
       }
 
-      await interaction.editReply({ embeds: [embed] });
+      tracer.checkpoint(9, 'work_complete');
+      await safeEditReply(interaction, tracer, { embeds: [embed] });
     } catch (err) {
-      logger.error({ error: (err as Error).message, guildId }, 'Failed to generate readiness report command');
-      await interaction.editReply({
+      tracer.errorCheckpoint(9, 'work_error', err);
+      logger.error({ correlationId: tracer.correlationId, error: (err as Error).message, guildId }, 'Failed to generate readiness report command');
+      await safeEditReply(interaction, tracer, {
         content: `❌ Failed to generate military readiness report: ${(err as Error).message}`,
-      }).catch(() => null);
+      });
     }
   }
 }

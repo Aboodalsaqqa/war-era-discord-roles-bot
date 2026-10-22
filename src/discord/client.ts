@@ -44,9 +44,13 @@ export async function initDiscordBot(): Promise<Client> {
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMembers,
     ],
+    rest: {
+      timeout: 10000, // 10s request timeout (fast failure instead of 15s+ retries hanging)
+      retries: 2,     // 2 retries max
+    },
   });
 
-  // REST client rate-limit and warning diagnostics
+  // REST client rate-limit and response monitoring
   client.rest.on('rateLimited', (rateLimitInfo) => {
     logger.warn(
       {
@@ -69,6 +73,17 @@ export async function initDiscordBot(): Promise<Client> {
         remainingTime: warningInfo.remainingTime,
       },
       '[DISCORD_REST] Invalid request warning received from Discord'
+    );
+  });
+
+  client.rest.on('response', (request, response) => {
+    logger.debug(
+      {
+        method: request.method,
+        path: request.path,
+        status: response.status,
+      },
+      '[DISCORD_REST] HTTP response received'
     );
   });
 
@@ -157,7 +172,21 @@ export async function initDiscordBot(): Promise<Client> {
 
   // 2. Events Setup
   client.once(Events.ClientReady, async (readyClient) => {
-    logger.info({ tag: readyClient.user.tag }, 'Discord Bot is logged in and ready');
+    const guilds = readyClient.guilds.cache;
+
+    // Checkpoint 3: Discord ready event fires
+    logger.info(
+      {
+        event: 'CHECKPOINT_3_READY',
+        tag: readyClient.user.tag,
+        botId: readyClient.user.id,
+        configuredClientId: config.discordClientId,
+        clientIdMatch: readyClient.user.id === config.discordClientId,
+        guildCount: guilds.size,
+        guilds: guilds.map((g) => ({ id: g.id, name: g.name, memberCount: g.memberCount })),
+      },
+      `[CHECKPOINT_3_READY] Discord Bot is logged in and ready as ${readyClient.user.tag}`
+    );
 
     // Register slash commands
     try {
@@ -166,9 +195,6 @@ export async function initDiscordBot(): Promise<Client> {
       
       logger.info(`Registering ${commandsBody.length} application (/) commands...`);
 
-      // Temporarily register commands per-guild during development for instant updates
-      // Global commands (Routes.applicationCommands) take up to 1 hour to propagate to all servers.
-      const guilds = readyClient.guilds.cache;
       for (const [guildId, guild] of guilds) {
         logger.info(`Registering commands instantly for guild: ${guild.name} (${guildId})`);
         await rest.put(
@@ -208,7 +234,9 @@ export async function initDiscordBot(): Promise<Client> {
           await interaction.reply({
             content: '❌ Failed to save your response. Please try again.',
             ephemeral: true,
-          }).catch(() => null);
+          }).catch((replyErr) => {
+            logger.error({ error: (replyErr as Error).message }, 'Failed to send button error reply');
+          });
         }
       }
       return;
@@ -216,11 +244,28 @@ export async function initDiscordBot(): Promise<Client> {
 
     if (!interaction.isChatInputCommand()) return;
 
+    // Checkpoint 4: interactionCreate receives the command
+    const correlationId = `int_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    logger.info(
+      {
+        event: 'CHECKPOINT_4_INTERACTION_RECEIVED',
+        correlationId,
+        commandName: interaction.commandName,
+        interactionId: interaction.id,
+        userId: interaction.user.id,
+        userTag: interaction.user.tag,
+        guildId: interaction.guildId ?? 'dm',
+        channelId: interaction.channelId,
+      },
+      `[CHECKPOINT_4_INTERACTION_RECEIVED] Received slash command /${interaction.commandName}`
+    );
+
     try {
-      await commandRouter.handleInteraction(interaction);
+      await commandRouter.handleInteraction(interaction, correlationId);
     } catch (err) {
       logger.error(
         {
+          correlationId,
           error: (err as Error).message,
           commandName: interaction.commandName,
           userId: interaction.user.id,
@@ -230,9 +275,13 @@ export async function initDiscordBot(): Promise<Client> {
         'Unhandled error in command router'
       );
       if (interaction.deferred && !interaction.replied) {
-        await interaction.editReply({ content: '❌ An unexpected error occurred.' }).catch(() => null);
+        await interaction.editReply({ content: '❌ An unexpected error occurred.' }).catch((editErr) => {
+          logger.error({ correlationId, error: (editErr as Error).message }, 'Failed to send editReply on error');
+        });
       } else if (interaction.replied) {
-        await interaction.followUp({ content: '❌ An unexpected error occurred.', ephemeral: true }).catch(() => null);
+        await interaction.followUp({ content: '❌ An unexpected error occurred.', ephemeral: true }).catch((fuErr) => {
+          logger.error({ correlationId, error: (fuErr as Error).message }, 'Failed to send followUp on error');
+        });
       }
     }
   });

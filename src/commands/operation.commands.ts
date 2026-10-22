@@ -2,6 +2,7 @@ import { ChatInputCommandInteraction, EmbedBuilder, GuildMember, PermissionFlags
 import { OperationService } from '../services/operation.service';
 import { GuildConfigRepository } from '../repositories/guildConfig.repository';
 import { logger } from '../utils/logger';
+import { CommandTracer, safeDeferReply, safeEditReply } from '../utils/commandTracer';
 
 export class OperationCommands {
   constructor(
@@ -28,30 +29,36 @@ export class OperationCommands {
     return false;
   }
 
-  async handleCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+  async handleCommand(interaction: ChatInputCommandInteraction, correlationId?: string): Promise<void> {
+    const tracer = new CommandTracer('operation', correlationId);
+    tracer.checkpoint(6, 'handler_start', { invokerId: interaction.user.id });
+
     const subcommand = interaction.options.getSubcommand(true);
     const guildId = interaction.guildId;
+    const isPublic = subcommand === 'list' || subcommand === 'status';
 
-    if (!guildId) {
-      await interaction.reply({ content: '❌ This command must be run inside a guild.', ephemeral: true });
+    const deferred = await safeDeferReply(interaction, tracer, { ephemeral: !isPublic });
+    if (!deferred) return;
+
+    if (!guildId || !interaction.guild) {
+      await safeEditReply(interaction, tracer, { content: '❌ This command must be run inside a guild.' });
       return;
     }
 
     // Check Permissions
     const isAuthorized = await this.isOfficerOrAdmin(interaction);
     if (!isAuthorized) {
-      await interaction.reply({
+      await safeEditReply(interaction, tracer, {
         content: '❌ You do not have permission to use MoD operations commands. Only administrators or configured Officers may use these.',
-        ephemeral: true,
       });
       return;
     }
 
-    logger.info({ guildId, subcommand, userId: interaction.user.id }, 'Executing operation command');
+    logger.info({ correlationId: tracer.correlationId, guildId, subcommand, userId: interaction.user.id }, 'Executing operation command');
 
     if (subcommand === 'create') {
-      await interaction.deferReply({ ephemeral: true });
       try {
+        tracer.checkpoint(9, 'work_start', { action: 'create' });
         const title = interaction.options.getString('title', true);
         const message = interaction.options.getString('message', true);
         const targetType = interaction.options.getString('target-type', true);
@@ -60,14 +67,14 @@ export class OperationCommands {
 
         // Validations
         if (targetType === 'mu' && !targetMuId) {
-          await interaction.editReply({
+          await safeEditReply(interaction, tracer, {
             content: '❌ You must specify a `mu-id` when targeting military units.',
           });
           return;
         }
 
         if (targetType === 'level' && !targetLevel) {
-          await interaction.editReply({
+          await safeEditReply(interaction, tracer, {
             content: '❌ You must specify a `minimum-level` when targeting levels.',
           });
           return;
@@ -84,7 +91,7 @@ export class OperationCommands {
           interaction.user.id
         );
 
-        await interaction.editReply({
+        await safeEditReply(interaction, tracer, {
           content: `🔄 Operation **"${title}"** registered in database. Dispatching alerts to matching players via DM...`,
         });
 
@@ -95,23 +102,28 @@ export class OperationCommands {
           interaction.user.tag
         );
 
+        tracer.checkpoint(9, 'work_complete', { action: 'create', operationId: operation.id, sentCount });
         await interaction.followUp({
           content: `✅ Operation **"${title}"** created and successfully dispatched to **${sentCount}** players!`,
           ephemeral: true,
+        }).catch((err) => {
+          logger.error({ correlationId: tracer.correlationId, error: (err as Error).message }, 'Failed to send operation followUp');
         });
       } catch (err) {
-        logger.error({ error: (err as Error).message }, 'Failed to create and dispatch operation');
-        await interaction.editReply({ content: `❌ Operation creation failed: ${(err as Error).message}` }).catch(() => null);
+        tracer.errorCheckpoint(9, 'work_error', err);
+        logger.error({ correlationId: tracer.correlationId, error: (err as Error).message }, 'Failed to create and dispatch operation');
+        await safeEditReply(interaction, tracer, { content: `❌ Operation creation failed: ${(err as Error).message}` });
       }
       return;
     }
 
     if (subcommand === 'list') {
-      await interaction.deferReply();
       try {
+        tracer.checkpoint(9, 'work_start', { action: 'list' });
         const operations = await this.operationService.listOperations(guildId);
         if (operations.length === 0) {
-          await interaction.editReply({ content: 'ℹ️ No military operations have been logged in this server.' });
+          tracer.checkpoint(9, 'work_complete', { count: 0 });
+          await safeEditReply(interaction, tracer, { content: 'ℹ️ No military operations have been logged in this server.' });
           return;
         }
 
@@ -132,19 +144,21 @@ export class OperationCommands {
           .setTimestamp()
           .setFooter({ text: 'Egypt Roles Bot • Developed by El-Gaiiar' });
 
-        await interaction.editReply({ embeds: [embed] });
+        tracer.checkpoint(9, 'work_complete', { count: operations.length });
+        await safeEditReply(interaction, tracer, { embeds: [embed] });
       } catch (err) {
-        logger.error({ error: (err as Error).message }, 'Error listing operations');
-        await interaction.editReply({ content: '❌ Failed to retrieve operations list.' }).catch(() => null);
+        tracer.errorCheckpoint(9, 'work_error', err);
+        logger.error({ correlationId: tracer.correlationId, error: (err as Error).message }, 'Error listing operations');
+        await safeEditReply(interaction, tracer, { content: '❌ Failed to retrieve operations list.' });
       }
       return;
     }
 
     if (subcommand === 'status') {
       const operationId = interaction.options.getString('operation-id', true);
-      await interaction.deferReply();
 
       try {
+        tracer.checkpoint(9, 'work_start', { action: 'status', operationId });
         const stats = await this.operationService.getOperationStats(operationId);
         
         let targetDetail = stats.operation.targetType.toUpperCase();
@@ -168,10 +182,12 @@ export class OperationCommands {
           .setTimestamp()
           .setFooter({ text: 'Egypt Roles Bot • Developed by El-Gaiiar' });
 
-        await interaction.editReply({ embeds: [embed] });
+        tracer.checkpoint(9, 'work_complete', { action: 'status', operationId });
+        await safeEditReply(interaction, tracer, { embeds: [embed] });
       } catch (err) {
-        logger.error({ error: (err as Error).message, operationId }, 'Error retrieving operation stats');
-        await interaction.editReply({ content: `❌ Failed to retrieve operation status: ${(err as Error).message}` }).catch(() => null);
+        tracer.errorCheckpoint(9, 'work_error', err);
+        logger.error({ correlationId: tracer.correlationId, error: (err as Error).message, operationId }, 'Error retrieving operation stats');
+        await safeEditReply(interaction, tracer, { content: `❌ Failed to retrieve operation status: ${(err as Error).message}` });
       }
       return;
     }
