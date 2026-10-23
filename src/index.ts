@@ -1,4 +1,5 @@
 import * as dns from 'node:dns';
+import { Agent, setGlobalDispatcher } from 'undici';
 import { Client } from 'discord.js';
 import { initDiscordBot } from './discord/client';
 import { prisma } from './database';
@@ -9,7 +10,21 @@ import { startHealthServer } from './server';
 // 1. Force IPv4 first DNS resolution order to prevent IPv6 AAAA connection stalls on Render/Docker
 dns.setDefaultResultOrder('ipv4first');
 
-// 2. Attach global process-level error and rejection listeners
+// 2. Configure Undici HTTP agent with strict IPv4, fast connection timeout, and short keep-alive
+// This prevents stale/dead TCP socket reuse across middleboxes (Render/Cloudflare) after idle periods
+const undiciAgent = new Agent({
+  connect: {
+    family: 4,      // Strictly IPv4
+    timeout: 2500, // Socket connect timeout: fail fast in 2.5s before Discord's 3s limit
+  },
+  keepAliveTimeout: 4000,       // Close idle connections after 4s (avoids dead socket reuse)
+  keepAliveMaxTimeout: 8000,
+  connections: 50,
+  pipelining: 0,
+});
+setGlobalDispatcher(undiciAgent);
+
+// 3. Attach global process-level error and rejection listeners
 process.on('unhandledRejection', (reason) => {
   logger.error(
     {
@@ -31,7 +46,7 @@ process.on('uncaughtException', (error) => {
 });
 
 async function bootstrap() {
-  const commit = process.env.RENDER_GIT_COMMIT || process.env.COMMIT_SHA || 'f95c30f1c11226abcd89c44aad4ceb3ae2cc1698';
+  const commit = process.env.RENDER_GIT_COMMIT || process.env.COMMIT_SHA || '51e6541868723ec8cba1b63d6355cb6d0888b21f';
   const branch = process.env.RENDER_GIT_BRANCH || 'main';
 
   // Checkpoint 1: Process starts
@@ -60,6 +75,22 @@ async function bootstrap() {
   // Start HTTP health check server immediately so Render detects the open port without delay
   let client: Client | null = null;
   const httpServer = startHealthServer(config.port, () => client?.isReady() ?? false);
+
+  // Anti-hibernation keep-alive ping for Render Free Web Services:
+  // Render Free Web Services hibernate after 15 minutes of inactivity if no inbound HTTP traffic hits them.
+  // Pinging the public health URL every 10 minutes resets Render's inactivity timer.
+  if (process.env.RENDER_EXTERNAL_URL) {
+    const healthUrl = `${process.env.RENDER_EXTERNAL_URL.replace(/\/$/, '')}/health`;
+    logger.info({ healthUrl }, 'Setting up anti-hibernation self-ping for Render Web Service (10 min interval)');
+    setInterval(async () => {
+      try {
+        const res = await fetch(healthUrl, { method: 'GET' });
+        logger.debug({ status: res.status }, 'Render anti-hibernation self-ping succeeded');
+      } catch (err) {
+        logger.warn({ error: (err as Error).message }, 'Render anti-hibernation self-ping failed');
+      }
+    }, 10 * 60 * 1000).unref();
+  }
 
   try {
     const loginStart = Date.now();

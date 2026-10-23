@@ -45,8 +45,8 @@ export async function initDiscordBot(): Promise<Client> {
       GatewayIntentBits.GuildMembers,
     ],
     rest: {
-      timeout: 10000, // 10s request timeout (fast failure instead of 15s+ retries hanging)
-      retries: 2,     // 2 retries max
+      timeout: 5000, // 5s request timeout (fast failure instead of 15s+ retries hanging)
+      retries: 1,    // 1 retry max to prevent 30s+ retry cascades
     },
   });
 
