@@ -2,23 +2,26 @@ import * as http from 'http';
 import { logger } from './utils/logger';
 import { UserLinkRepository } from './repositories/userLink.repository';
 import { config } from './config';
+import { RateLimitMetadata } from './discord/rateLimitTracker';
 
 export interface ServerOptions {
   port: number;
   isReady?: () => boolean;
   userLinkRepo?: UserLinkRepository;
+  getRateLimitState?: () => RateLimitMetadata;
 }
 
 export function startHealthServer(
   portOrOptions: number | ServerOptions,
-  isReadyCallback?: () => boolean
+  isReadyCallback?: () => boolean,
+  getRateLimitStateCallback?: () => RateLimitMetadata
 ): http.Server {
   const options: ServerOptions =
     typeof portOrOptions === 'number'
-      ? { port: portOrOptions, isReady: isReadyCallback }
+      ? { port: portOrOptions, isReady: isReadyCallback, getRateLimitState: getRateLimitStateCallback }
       : portOrOptions;
 
-  const { port, isReady } = options;
+  const { port, isReady, getRateLimitState } = options;
   const userLinkRepo = options.userLinkRepo || new UserLinkRepository();
 
   const server = http.createServer(async (req, res) => {
@@ -47,14 +50,24 @@ export function startHealthServer(
 
     // 1. Health & Ping check (public, no authentication required)
     // /ready endpoint: returns 200 only when Discord is actively ready, 503 otherwise.
-    // /health & /ping: returns 200 during normal startup window (<60s) or when ready.
-    // If the process has been running for >60s and Discord is STILL not ready, returns 503 so PaaS/Render detects the stalled startup.
+    // /health & /ping: returns 200 during startup window, during legitimate Discord rate-limit backoff, or when ready.
+    // If stalled without active rate limit for >90s, returns 503 so PaaS detects frozen processes.
     if (req.method === 'GET' && (pathname === '/' || pathname === '/health' || pathname === '/ping' || pathname === '/ready')) {
       const ready = isReady ? isReady() : false;
+      const rlState = getRateLimitState ? getRateLimitState() : null;
+      const isRateLimited = rlState?.isRateLimited ?? false;
       const isReadinessRoute = pathname === '/ready';
-      const isStalled = !ready && process.uptime() > 60;
+
+      const isStalled = !ready && !isRateLimited && process.uptime() > 90;
       const isHealthy = isReadinessRoute ? ready : !isStalled;
       const statusCode = isHealthy ? 200 : 503;
+
+      let statusDescription = 'ok';
+      if (isRateLimited) {
+        statusDescription = 'rate_limited';
+      } else if (isStalled) {
+        statusDescription = 'stalled';
+      }
 
       res.writeHead(statusCode, {
         'Content-Type': 'application/json',
@@ -62,9 +75,20 @@ export function startHealthServer(
       });
       res.end(
         JSON.stringify({
-          status: isHealthy ? 'ok' : (isStalled ? 'stalled' : 'degraded'),
+          status: statusDescription,
           service: 'warera-egypt-bot',
           discordReady: ready,
+          rateLimit: isRateLimited
+            ? {
+                active: true,
+                scope: rlState?.lastScope,
+                isGlobal: rlState?.isGlobal,
+                remainingCooldownSeconds: Math.ceil(
+                  (rlState?.activeUntil ? Math.max(0, rlState.activeUntil - Date.now()) : 0) / 1000
+                ),
+                path: rlState?.lastPath,
+              }
+            : undefined,
           uptime: Math.floor(process.uptime()),
           timestamp: new Date().toISOString(),
         })

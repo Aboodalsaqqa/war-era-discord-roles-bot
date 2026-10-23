@@ -1,6 +1,7 @@
 import { Client, GatewayIntentBits, Events, REST, Routes, Interaction } from 'discord.js';
 import { config } from '../config';
 import { logger } from '../utils/logger';
+import { rateLimitTracker } from './rateLimitTracker';
 
 // Repositories
 import { GuildConfigRepository } from '../repositories/guildConfig.repository';
@@ -52,6 +53,13 @@ export async function initDiscordBot(): Promise<Client> {
 
   // REST client rate-limit and response monitoring
   client.rest.on('rateLimited', (rateLimitInfo) => {
+    rateLimitTracker.recordRateLimit({
+      path: rateLimitInfo.route,
+      retryAfterMs: rateLimitInfo.timeToReset,
+      scope: rateLimitInfo.scope,
+      isGlobal: rateLimitInfo.global,
+      limit: rateLimitInfo.limit,
+    });
     logger.warn(
       {
         global: rateLimitInfo.global,
@@ -61,9 +69,18 @@ export async function initDiscordBot(): Promise<Client> {
         timeToReset: rateLimitInfo.timeToReset,
         limit: rateLimitInfo.limit,
         sublimitTimeout: rateLimitInfo.sublimitTimeout,
+        scope: rateLimitInfo.scope,
       },
-      '[DISCORD_REST] Rate limit encountered on Discord REST API'
+      `[DISCORD_REST] Rate limit encountered on route ${rateLimitInfo.route} (waiting ${rateLimitInfo.timeToReset}ms, scope: ${rateLimitInfo.scope})`
     );
+  });
+
+  client.rest.on('restDebug', (info: string) => {
+    if (info.includes('429') || info.includes('rate limit') || info.includes('Waiting') || info.includes('Global')) {
+      logger.warn({ restDebug: info }, '[DISCORD_REST] Rate limit activity');
+    } else {
+      logger.debug({ restDebug: info }, '[DISCORD_REST_DEBUG]');
+    }
   });
 
   client.rest.on('invalidRequestWarning', (warningInfo) => {
@@ -76,15 +93,103 @@ export async function initDiscordBot(): Promise<Client> {
     );
   });
 
-  client.rest.on('response', (request, response) => {
-    logger.info(
-      {
-        method: request.method,
+  client.rest.on('response', async (request, response) => {
+    const is429 = response.status === 429;
+    const isError = response.status >= 400;
+
+    if (is429) {
+      const retryAfterHeader = response.headers?.get?.('retry-after') ?? null;
+      const scope = response.headers?.get?.('x-ratelimit-scope') ?? null;
+      const isGlobal = response.headers?.get?.('x-ratelimit-global') === 'true';
+      const limit = response.headers?.get?.('x-ratelimit-limit') ?? null;
+      const remaining = response.headers?.get?.('x-ratelimit-remaining') ?? null;
+      const reset = response.headers?.get?.('x-ratelimit-reset') ?? null;
+      const resetAfter = response.headers?.get?.('x-ratelimit-reset-after') ?? null;
+      const bucket = response.headers?.get?.('x-ratelimit-bucket') ?? null;
+      const via = response.headers?.get?.('via') ?? null;
+      const cfRay = response.headers?.get?.('cf-ray') ?? null;
+
+      let responseBody: unknown = null;
+      try {
+        const respAny = response as unknown as { clone?: () => { text: () => Promise<string> } };
+        if (typeof respAny.clone === 'function') {
+          const text = await respAny.clone().text();
+          try {
+            responseBody = JSON.parse(text);
+          } catch {
+            responseBody = text.slice(0, 500);
+          }
+        }
+      } catch (cloneErr) {
+        responseBody = `[Clone failed: ${(cloneErr as Error).message}]`;
+      }
+
+      // Calculate retry delay in milliseconds
+      let retryAfterMs = 5000;
+      if (retryAfterHeader) {
+        const parsed = parseFloat(retryAfterHeader);
+        if (!isNaN(parsed)) retryAfterMs = Math.ceil(parsed * 1000);
+      } else if (responseBody && typeof responseBody === 'object' && 'retry_after' in responseBody) {
+        const bodyRetry = (responseBody as { retry_after: number }).retry_after;
+        if (typeof bodyRetry === 'number') retryAfterMs = Math.ceil(bodyRetry * 1000);
+      }
+
+      rateLimitTracker.recordRateLimit({
         path: request.path,
-        status: response.status,
-      },
-      '[DISCORD_REST] HTTP response received'
-    );
+        retryAfterMs,
+        scope,
+        isGlobal,
+        limit: limit ? Number(limit) : null,
+        remaining: remaining ? Number(remaining) : null,
+        resetAfter: resetAfter ? Number(resetAfter) : null,
+        bucket,
+        via,
+        cfRay,
+        responseBody,
+      });
+
+      logger.warn(
+        {
+          method: request.method,
+          path: request.path,
+          status: response.status,
+          retryAfterHeader,
+          retryAfterMs,
+          scope,
+          isGlobal,
+          limit,
+          remaining,
+          reset,
+          resetAfter,
+          bucket,
+          via,
+          cfRay,
+          responseBody,
+        },
+        `[DISCORD_REST] Rate limit (HTTP 429) received on ${request.path} - sleeping for ${retryAfterMs}ms (scope: ${scope ?? 'unknown'}, global: ${isGlobal})`
+      );
+      return;
+    }
+
+    if (isError) {
+      logger.warn(
+        {
+          method: request.method,
+          path: request.path,
+          status: response.status,
+        },
+        '[DISCORD_REST] HTTP non-2xx response received'
+      );
+    } else {
+      logger.info(
+        {
+          method: request.method,
+          path: request.path,
+          status: response.status,
+        },
+        '[DISCORD_REST] HTTP response received'
+      );
+    }
   });
 
   // Gateway debug listener with credential redaction
@@ -310,18 +415,48 @@ export async function initDiscordBot(): Promise<Client> {
     }
   });
 
-  // Login with bounded timeout to prevent silent indefinite hangs on gateway/network issues
-  const LOGIN_TIMEOUT_MS = 45000;
+  // Login with dynamically bounded timeout:
+  // If Discord issues a rate-limit Retry-After, dynamically extend timeout so @discordjs/rest
+  // can complete its legitimate sleep and retry without premature process abort.
+  const DEFAULT_LOGIN_TIMEOUT_MS = 45000;
+  const loginStart = Date.now();
+  const loginPromise = client.login(config.discordToken);
+
+  let checkTimer: NodeJS.Timeout | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    checkTimer = setInterval(() => {
+      const now = Date.now();
+      const elapsed = now - loginStart;
+      const remainingCooldown = rateLimitTracker.getRemainingCooldownMs();
+
+      let effectiveTimeout = DEFAULT_LOGIN_TIMEOUT_MS;
+      if (remainingCooldown > 0) {
+        effectiveTimeout = Math.max(DEFAULT_LOGIN_TIMEOUT_MS, elapsed + remainingCooldown + 30000);
+        logger.info(
+          {
+            elapsedMs: elapsed,
+            remainingCooldownMs: remainingCooldown,
+            effectiveTimeoutMs: effectiveTimeout,
+            scope: rateLimitTracker.getState().lastScope,
+          },
+          '[DISCORD_CLIENT] Login wait dynamically extended to accommodate Discord rate-limit Retry-After'
+        );
+      }
+
+      if (elapsed > effectiveTimeout) {
+        if (checkTimer) clearInterval(checkTimer);
+        reject(
+          new Error(
+            `Discord client login timed out after ${Math.round(elapsed / 1000)}s without establishing a ready session`
+          )
+        );
+      }
+    }, 5000);
+  });
+
   try {
-    logger.info({ timeoutMs: LOGIN_TIMEOUT_MS }, 'Attempting Discord client login...');
-    await Promise.race([
-      client.login(config.discordToken),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => {
-          reject(new Error(`Discord client login timed out after ${LOGIN_TIMEOUT_MS / 1000}s without establishing a ready session`));
-        }, LOGIN_TIMEOUT_MS).unref()
-      ),
-    ]);
+    logger.info('Attempting Discord client login...');
+    await Promise.race([loginPromise, timeoutPromise]);
   } catch (error) {
     logger.error({ error: (error as Error).message }, 'Failed to login to Discord');
     try {
@@ -330,6 +465,8 @@ export async function initDiscordBot(): Promise<Client> {
       logger.error({ error: (destroyErr as Error).message }, 'Failed to destroy Discord client after login failure');
     }
     throw error;
+  } finally {
+    if (checkTimer) clearInterval(checkTimer);
   }
 
   return client;
