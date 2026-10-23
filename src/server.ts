@@ -46,15 +46,23 @@ export function startHealthServer(
     }
 
     // 1. Health & Ping check (public, no authentication required)
-    if (req.method === 'GET' && (pathname === '/' || pathname === '/health' || pathname === '/ping')) {
-      const ready = isReady ? isReady() : true;
-      res.writeHead(200, {
+    // /ready endpoint: returns 200 only when Discord is actively ready, 503 otherwise.
+    // /health & /ping: returns 200 during normal startup window (<60s) or when ready.
+    // If the process has been running for >60s and Discord is STILL not ready, returns 503 so PaaS/Render detects the stalled startup.
+    if (req.method === 'GET' && (pathname === '/' || pathname === '/health' || pathname === '/ping' || pathname === '/ready')) {
+      const ready = isReady ? isReady() : false;
+      const isReadinessRoute = pathname === '/ready';
+      const isStalled = !ready && process.uptime() > 60;
+      const isHealthy = isReadinessRoute ? ready : !isStalled;
+      const statusCode = isHealthy ? 200 : 503;
+
+      res.writeHead(statusCode, {
         'Content-Type': 'application/json',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
       });
       res.end(
         JSON.stringify({
-          status: 'ok',
+          status: isHealthy ? 'ok' : (isStalled ? 'stalled' : 'degraded'),
           service: 'warera-egypt-bot',
           discordReady: ready,
           uptime: Math.floor(process.uptime()),

@@ -1,5 +1,4 @@
 import * as dns from 'node:dns';
-import { Agent, setGlobalDispatcher } from 'undici';
 import { Client } from 'discord.js';
 import { initDiscordBot } from './discord/client';
 import { prisma } from './database';
@@ -10,21 +9,7 @@ import { startHealthServer } from './server';
 // 1. Force IPv4 first DNS resolution order to prevent IPv6 AAAA connection stalls on Render/Docker
 dns.setDefaultResultOrder('ipv4first');
 
-// 2. Configure Undici HTTP agent with strict IPv4, fast connection timeout, and short keep-alive
-// This prevents stale/dead TCP socket reuse across middleboxes (Render/Cloudflare) after idle periods
-const undiciAgent = new Agent({
-  connect: {
-    family: 4,      // Strictly IPv4
-    timeout: 2500, // Socket connect timeout: fail fast in 2.5s before Discord's 3s limit
-  },
-  keepAliveTimeout: 4000,       // Close idle connections after 4s (avoids dead socket reuse)
-  keepAliveMaxTimeout: 8000,
-  connections: 50,
-  pipelining: 0,
-});
-setGlobalDispatcher(undiciAgent);
-
-// 3. Attach global process-level error and rejection listeners
+// 2. Attach global process-level error and rejection listeners
 process.on('unhandledRejection', (reason) => {
   logger.error(
     {
@@ -140,7 +125,15 @@ async function bootstrap() {
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
   } catch (error) {
-    logger.fatal({ error: (error as Error).message }, 'Failed to bootstrap application');
+    logger.fatal(
+      {
+        event: 'CHECKPOINT_2_LOGIN_FAILED',
+        error: (error as Error).message,
+        stack: (error as Error).stack,
+        uptime: process.uptime(),
+      },
+      '[CHECKPOINT_2_LOGIN_FAILED] Failed to bootstrap application / login to Discord'
+    );
     process.exit(1);
   }
 }

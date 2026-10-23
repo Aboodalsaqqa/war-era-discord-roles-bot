@@ -45,8 +45,8 @@ export async function initDiscordBot(): Promise<Client> {
       GatewayIntentBits.GuildMembers,
     ],
     rest: {
-      timeout: 5000, // 5s request timeout (fast failure instead of 15s+ retries hanging)
-      retries: 1,    // 1 retry max to prevent 30s+ retry cascades
+      timeout: 15000, // 15s request timeout (standard resilient timeout)
+      retries: 2,     // 2 retries on network failures
     },
   });
 
@@ -77,7 +77,7 @@ export async function initDiscordBot(): Promise<Client> {
   });
 
   client.rest.on('response', (request, response) => {
-    logger.debug(
+    logger.info(
       {
         method: request.method,
         path: request.path,
@@ -87,7 +87,31 @@ export async function initDiscordBot(): Promise<Client> {
     );
   });
 
+  // Gateway debug listener with credential redaction
+  client.on(Events.Debug, (message) => {
+    const sanitized = message.replace(
+      /(mfa\.[a-z0-9_-]+|bot\s+[a-z0-9_.-]+|[a-z0-9_-]{24,}\.[a-z0-9_-]{6,}\.[a-z0-9_-]{27,})/gi,
+      '[REDACTED_TOKEN]'
+    );
+    if (
+      sanitized.includes('[WS =>') ||
+      sanitized.includes('Preparing to connect') ||
+      sanitized.includes('Heartbeat') ||
+      sanitized.includes('Identif') ||
+      sanitized.includes('Ready') ||
+      sanitized.includes('Resume')
+    ) {
+      logger.info({ gateway: sanitized }, '[DISCORD_GATEWAY]');
+    } else {
+      logger.debug({ gateway: sanitized }, '[DISCORD_GATEWAY_DEBUG]');
+    }
+  });
+
   // Gateway client and shard error/lifecycle monitoring
+  client.on(Events.ShardReady, (shardId) => {
+    logger.info({ shardId }, '[DISCORD_CLIENT] Shard ready');
+  });
+
   client.on(Events.Error, (error) => {
     logger.error({ error: error.message, name: error.name }, '[DISCORD_CLIENT] Gateway client error');
   });
@@ -286,11 +310,25 @@ export async function initDiscordBot(): Promise<Client> {
     }
   });
 
-  // Login
+  // Login with bounded timeout to prevent silent indefinite hangs on gateway/network issues
+  const LOGIN_TIMEOUT_MS = 45000;
   try {
-    await client.login(config.discordToken);
+    logger.info({ timeoutMs: LOGIN_TIMEOUT_MS }, 'Attempting Discord client login...');
+    await Promise.race([
+      client.login(config.discordToken),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => {
+          reject(new Error(`Discord client login timed out after ${LOGIN_TIMEOUT_MS / 1000}s without establishing a ready session`));
+        }, LOGIN_TIMEOUT_MS).unref()
+      ),
+    ]);
   } catch (error) {
     logger.error({ error: (error as Error).message }, 'Failed to login to Discord');
+    try {
+      await client.destroy();
+    } catch (destroyErr) {
+      logger.error({ error: (destroyErr as Error).message }, 'Failed to destroy Discord client after login failure');
+    }
     throw error;
   }
 
