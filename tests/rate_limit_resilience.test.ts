@@ -126,6 +126,49 @@ async function runTests() {
     }
   }
 
+  // Test 5: Cloudflare Edge IP ban detection & recommendation
+  console.log('Test 5: Detection of prolonged Cloudflare Edge IP ban with region switch recommendation');
+  {
+    rateLimitTracker.reset();
+    rateLimitTracker.recordRateLimit({
+      path: '/gateway/bot',
+      retryAfterMs: 61516000, // 17 hours
+      scope: 'unknown',
+      cfRay: 'a4f4b3320f78e8e9-PDX',
+      limit: null,
+      remaining: null,
+    });
+
+    const state = rateLimitTracker.getState();
+    assert.strictEqual(state.lastScope, 'cloudflare_ip_ban', 'Scope should be detected as cloudflare_ip_ban');
+    assert.strictEqual(state.isRateLimited, true, 'isRateLimited should be true');
+
+    const server = startHealthServer(
+      0,
+      () => false,
+      () => rateLimitTracker.getState()
+    );
+
+    await new Promise<void>((resolve) => server.listen(0, () => resolve()));
+    const port = (server.address() as { port: number }).port;
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/health`);
+      const body = await res.json() as {
+        status: string;
+        rateLimit?: { scope: string; remainingHours: number; recommendation?: string };
+      };
+
+      assert.strictEqual(body.status, 'rate_limited');
+      assert.strictEqual(body.rateLimit?.scope, 'cloudflare_ip_ban');
+      assert.ok((body.rateLimit?.remainingHours ?? 0) > 16, 'remainingHours should be > 16');
+      assert.ok(body.rateLimit?.recommendation?.includes('Region'), 'recommendation should suggest changing Region');
+      console.log('✔ Test 5 Passed: Cloudflare IP ban correctly flagged with region recommendation.\n');
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }
+
   console.log('===================================================');
   console.log('ALL RATE-LIMIT RESILIENCE & DIAGNOSTICS TESTS PASSED!');
   console.log('===================================================\n');

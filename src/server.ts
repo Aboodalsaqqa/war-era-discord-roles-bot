@@ -86,7 +86,14 @@ export function startHealthServer(
                 remainingCooldownSeconds: Math.ceil(
                   (rlState?.activeUntil ? Math.max(0, rlState.activeUntil - Date.now()) : 0) / 1000
                 ),
+                remainingHours: rlState?.activeUntil
+                  ? +((Math.max(0, rlState.activeUntil - Date.now()) / (1000 * 3600)).toFixed(2))
+                  : 0,
                 path: rlState?.lastPath,
+                cfRay: rlState?.cfRay,
+                recommendation: (rlState?.lastRetryAfterMs ?? 0) > 300000
+                  ? 'Cloudflare edge ban on current Render IP. Change Render service Region in dashboard (e.g. Oregon -> Frankfurt or Ohio) to acquire a fresh outbound IP immediately.'
+                  : undefined,
               }
             : undefined,
           uptime: Math.floor(process.uptime()),

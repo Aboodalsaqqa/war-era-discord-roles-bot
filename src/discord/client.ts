@@ -423,6 +423,7 @@ export async function initDiscordBot(): Promise<Client> {
   const loginPromise = client.login(config.discordToken);
 
   let checkTimer: NodeJS.Timeout | null = null;
+  let lastLoggedExtension = 0;
   const timeoutPromise = new Promise<never>((_, reject) => {
     checkTimer = setInterval(() => {
       const now = Date.now();
@@ -432,15 +433,20 @@ export async function initDiscordBot(): Promise<Client> {
       let effectiveTimeout = DEFAULT_LOGIN_TIMEOUT_MS;
       if (remainingCooldown > 0) {
         effectiveTimeout = Math.max(DEFAULT_LOGIN_TIMEOUT_MS, elapsed + remainingCooldown + 30000);
-        logger.info(
-          {
-            elapsedMs: elapsed,
-            remainingCooldownMs: remainingCooldown,
-            effectiveTimeoutMs: effectiveTimeout,
-            scope: rateLimitTracker.getState().lastScope,
-          },
-          '[DISCORD_CLIENT] Login wait dynamically extended to accommodate Discord rate-limit Retry-After'
-        );
+        // Only log once every 60s to prevent spamming logs during prolonged rate limits
+        if (now - lastLoggedExtension >= 60000) {
+          lastLoggedExtension = now;
+          logger.info(
+            {
+              elapsedMs: elapsed,
+              remainingCooldownMs: remainingCooldown,
+              remainingHours: +(remainingCooldown / (1000 * 3600)).toFixed(2),
+              effectiveTimeoutMs: effectiveTimeout,
+              scope: rateLimitTracker.getState().lastScope,
+            },
+            `[DISCORD_CLIENT] Login wait dynamically extended to accommodate Discord rate-limit Retry-After (${Math.ceil(remainingCooldown / 1000)}s remaining)`
+          );
+        }
       }
 
       if (elapsed > effectiveTimeout) {
