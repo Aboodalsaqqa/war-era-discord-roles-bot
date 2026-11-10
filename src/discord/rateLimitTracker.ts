@@ -16,6 +16,26 @@ export interface RateLimitMetadata {
   lastEncounteredAt: number;
 }
 
+/**
+ * Interaction and webhook routes embed a bearer-style token in the URL
+ * (/interactions/{id}/{token}/callback, /webhooks/{appId}/{token}/...).
+ * Anyone holding it can respond to that interaction for 15 minutes, so it must
+ * never reach logs or the public health endpoint.
+ */
+export function redactDiscordPath(value: string): string {
+  return value.replace(/\/(interactions|webhooks)\/(\d{17,20})\/[^/?\s]+/g, '/$1/$2/[REDACTED]');
+}
+
+/**
+ * Routes on which a 429 must reject immediately instead of letting @discordjs/rest
+ * sleep for Retry-After. Interaction responses are useless after 3 seconds (15 minutes
+ * for follow-ups), and a Cloudflare IP ban carries a Retry-After of many hours, which
+ * otherwise leaves deferReply()/editReply() pending with nothing logged.
+ */
+export function shouldRejectOnRateLimit(route: string): boolean {
+  return route.startsWith('/interactions/') || route.startsWith('/webhooks/');
+}
+
 class DiscordRateLimitTracker {
   private state: RateLimitMetadata = {
     isRateLimited: false,
@@ -49,6 +69,7 @@ class DiscordRateLimitTracker {
     cfRay?: string | null;
     responseBody?: unknown;
   }): void {
+    params = { ...params, path: redactDiscordPath(params.path) };
     const now = Date.now();
     const until = now + params.retryAfterMs;
 
