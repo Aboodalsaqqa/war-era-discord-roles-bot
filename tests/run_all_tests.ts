@@ -13,6 +13,7 @@ const suites: TestSuite[] = [
   { name: 'Command Routing & Lifecycle Verification', file: 'command_routing_lifecycle.test.ts', testCount: 5 },
   { name: 'Role Synchronization & Corps Logic', file: 'role_sync_logic.test.ts', testCount: 4 },
   { name: 'Rate-Limit Resilience & 429 Diagnostics', file: 'rate_limit_resilience.test.ts', testCount: 5 },
+  { name: 'Interaction Rate-Limit Fail-Fast & Token Redaction', file: 'interaction_rate_limit.test.ts', testCount: 4 },
 ];
 
 console.log('================================================================');

@@ -1,7 +1,7 @@
 import { Client, GatewayIntentBits, Events, REST, Routes, Interaction } from 'discord.js';
 import { config } from '../config';
 import { logger } from '../utils/logger';
-import { rateLimitTracker } from './rateLimitTracker';
+import { rateLimitTracker, redactDiscordPath, shouldRejectOnRateLimit } from './rateLimitTracker';
 
 // Repositories
 import { GuildConfigRepository } from '../repositories/guildConfig.repository';
@@ -48,6 +48,9 @@ export async function initDiscordBot(): Promise<Client> {
     rest: {
       timeout: 15000, // 15s request timeout (standard resilient timeout)
       retries: 2,     // 2 retries on network failures
+      // Fail fast on 429s for interaction responses so the failure is logged at once
+      // instead of sleeping for Retry-After (hours during a Cloudflare IP ban).
+      rejectOnRateLimit: (rateLimitData) => shouldRejectOnRateLimit(rateLimitData.route),
     },
   });
 
@@ -64,7 +67,7 @@ export async function initDiscordBot(): Promise<Client> {
       {
         global: rateLimitInfo.global,
         method: rateLimitInfo.method,
-        url: rateLimitInfo.url,
+        url: redactDiscordPath(rateLimitInfo.url),
         route: rateLimitInfo.route,
         timeToReset: rateLimitInfo.timeToReset,
         limit: rateLimitInfo.limit,
@@ -75,7 +78,8 @@ export async function initDiscordBot(): Promise<Client> {
     );
   });
 
-  client.rest.on('restDebug', (info: string) => {
+  client.rest.on('restDebug', (rawInfo: string) => {
+    const info = redactDiscordPath(rawInfo);
     if (info.includes('429') || info.includes('rate limit') || info.includes('Waiting') || info.includes('Global')) {
       logger.warn({ restDebug: info }, '[DISCORD_REST] Rate limit activity');
     } else {
@@ -94,6 +98,7 @@ export async function initDiscordBot(): Promise<Client> {
   });
 
   client.rest.on('response', async (request, response) => {
+    const safePath = redactDiscordPath(request.path);
     const is429 = response.status === 429;
     const isError = response.status >= 400;
 
@@ -135,7 +140,7 @@ export async function initDiscordBot(): Promise<Client> {
       }
 
       rateLimitTracker.recordRateLimit({
-        path: request.path,
+        path: safePath,
         retryAfterMs,
         scope,
         isGlobal,
@@ -151,7 +156,7 @@ export async function initDiscordBot(): Promise<Client> {
       logger.warn(
         {
           method: request.method,
-          path: request.path,
+          path: safePath,
           status: response.status,
           retryAfterHeader,
           retryAfterMs,
@@ -166,7 +171,7 @@ export async function initDiscordBot(): Promise<Client> {
           cfRay,
           responseBody,
         },
-        `[DISCORD_REST] Rate limit (HTTP 429) received on ${request.path} - sleeping for ${retryAfterMs}ms (scope: ${scope ?? 'unknown'}, global: ${isGlobal})`
+        `[DISCORD_REST] Rate limit (HTTP 429) received on ${safePath} - sleeping for ${retryAfterMs}ms (scope: ${scope ?? 'unknown'}, global: ${isGlobal})`
       );
       return;
     }
@@ -175,7 +180,7 @@ export async function initDiscordBot(): Promise<Client> {
       logger.warn(
         {
           method: request.method,
-          path: request.path,
+          path: safePath,
           status: response.status,
         },
         '[DISCORD_REST] HTTP non-2xx response received'
@@ -184,7 +189,7 @@ export async function initDiscordBot(): Promise<Client> {
       logger.info(
         {
           method: request.method,
-          path: request.path,
+          path: safePath,
           status: response.status,
         },
         '[DISCORD_REST] HTTP response received'
