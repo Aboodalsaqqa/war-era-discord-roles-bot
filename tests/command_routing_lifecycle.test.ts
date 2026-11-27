@@ -22,6 +22,7 @@ async function runCommandLifecycleTests() {
     'sync',
     'sync-all',
     'config',
+    'unconfig',
     'mu-role',
     'level-role',
     'recruitment',
@@ -59,6 +60,7 @@ async function runCommandLifecycleTests() {
 
   const mockConfigCommands = {
     configureRoles: async () => { calledHandlers.add('config'); },
+    unconfigureRoles: async () => { calledHandlers.add('unconfig'); },
     configureMuRoles: async () => { calledHandlers.add('mu-role'); },
     configureLevelRoles: async () => { calledHandlers.add('level-role'); },
   } as any;
@@ -209,6 +211,70 @@ async function runCommandLifecycleTests() {
 
   await new Promise<void>((resolve) => server.close(() => resolve()));
   console.log('✔ Test 5 Passed: HTTP Health check & read-only API endpoints function correctly.\n');
+
+  // -------------------------------------------------------------
+  // Test 6: /unconfig Command Behavior & Permission Enforcement
+  // -------------------------------------------------------------
+  console.log('Test 6: Verify /unconfig clears configured roles and enforces admin permission');
+  const { ConfigCommands } = await import('../src/commands/config.commands');
+  let mockStoredConfig: Record<string, any> | null = {
+    guildId: 'guild_1',
+    citizenRoleId: 'role_citizen_123',
+    officerRoleId: null,
+  };
+  let lastUpdatedData: any = null;
+
+  const mockGuildConfigService = {
+    getConfig: async () => mockStoredConfig,
+    updateConfig: async (_guildId: string, data: any) => {
+      lastUpdatedData = data;
+      mockStoredConfig = { ...mockStoredConfig, ...data };
+      return mockStoredConfig;
+    },
+  } as any;
+
+  const configCommands = new ConfigCommands(mockGuildConfigService, {} as any, {} as any);
+
+  // 6a. Reject non-admin
+  let nonAdminReply: any = null;
+  await configCommands.unconfigureRoles({
+    guildId: 'guild_1',
+    user: { id: 'user_non_admin' },
+    memberPermissions: { has: () => false },
+    options: { getString: () => 'citizen-role' },
+    reply: async (p: any) => { nonAdminReply = p; },
+  } as any);
+  assert(nonAdminReply?.ephemeral === true && nonAdminReply?.content.includes('Administrator'), 'Non-admin should be rejected');
+
+  // 6b. Clear configured role
+  let unconfigReply: any = null;
+  await configCommands.unconfigureRoles({
+    guildId: 'guild_1',
+    user: { id: 'admin_1' },
+    memberPermissions: { has: (flag: any) => flag === PermissionFlagsBits.Administrator },
+    options: { getString: () => 'citizen-role' },
+    deferred: false,
+    replied: false,
+    deferReply: async function () { this.deferred = true; },
+    editReply: async (p: any) => { unconfigReply = p; },
+  } as any);
+  assert.deepStrictEqual(lastUpdatedData, { citizenRoleId: null }, 'citizenRoleId should be updated to null');
+  assert(unconfigReply?.content.includes('Successfully unconfigured'), 'Should confirm unconfiguration');
+
+  // 6c. Inform when role is already unset
+  let unsetReply: any = null;
+  await configCommands.unconfigureRoles({
+    guildId: 'guild_1',
+    user: { id: 'admin_1' },
+    memberPermissions: { has: (flag: any) => flag === PermissionFlagsBits.Administrator },
+    options: { getString: () => 'officer-role' },
+    deferred: false,
+    replied: false,
+    deferReply: async function () { this.deferred = true; },
+    editReply: async (p: any) => { unsetReply = p; },
+  } as any);
+  assert(unsetReply?.content.includes('not currently configured'), 'Should inform if role is already unset');
+  console.log('✔ Test 6 Passed: /unconfig clears roles, handles unset roles, and enforces permissions.\n');
 
   console.log('===================================================');
   console.log('ALL COMMAND ROUTING & LIFECYCLE TESTS PASSED!');
