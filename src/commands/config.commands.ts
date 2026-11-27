@@ -1,9 +1,26 @@
-import { ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
+import { ChatInputCommandInteraction, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
+import { GuildConfig } from '@prisma/client';
 import { GuildConfigService } from '../services/guildConfig.service';
 import { MuRoleService } from '../services/muRole.service';
 import { LevelRoleRepository } from '../repositories/levelRole.repository';
 import { logger } from '../utils/logger';
 import { CommandTracer, safeDeferReply, safeEditReply } from '../utils/commandTracer';
+
+type GuildRoleField = keyof Omit<GuildConfig, 'id' | 'guildId' | 'updatedAt'>;
+
+const ROLE_CONFIG_FIELDS: Record<string, { field: GuildRoleField; label: string }> = {
+  'citizen-role': { field: 'citizenRoleId', label: '🇪🇬 Egypt Citizen' },
+  'officer-role': { field: 'officerRoleId', label: '🛡️ Officer' },
+  'vice-president-role': { field: 'vicePresidentRoleId', label: '🎖️ Vice President' },
+  'congress-role': { field: 'congressRoleId', label: '🏛️ Congress Member' },
+  'war-role': { field: 'warRoleId', label: '⚔️ War Specialist' },
+  'economy-role': { field: 'economyRoleId', label: '🏭 Economy Specialist' },
+  'hybrid-role': { field: 'hybridRoleId', label: '⚖️ Hybrid Specialist' },
+  'trusted-role': { field: 'trustedRoleId', label: '🤝 Trusted' },
+  'mu-commander-role': { field: 'muCommanderRoleId', label: '🎖️ MU Commander' },
+  'mu-owner-role': { field: 'muOwnerRoleId', label: '👑 MU Owner' },
+  'no-mu-role': { field: 'noMuRoleId', label: '⛺ No MU Yet' },
+};
 
 export class ConfigCommands {
   constructor(
@@ -34,71 +51,85 @@ export class ConfigCommands {
 
     try {
       tracer.checkpoint(9, 'work_start', { subcommand, roleId: role.id });
-      let field: string;
-      let fieldLabel: string;
+      const mapping = ROLE_CONFIG_FIELDS[subcommand];
 
-      switch (subcommand) {
-        case 'citizen-role':
-          field = 'citizenRoleId';
-          fieldLabel = '🇪🇬 Egypt Citizen';
-          break;
-        case 'officer-role':
-          field = 'officerRoleId';
-          fieldLabel = '🛡️ Officer';
-          break;
-        case 'vice-president-role':
-          field = 'vicePresidentRoleId';
-          fieldLabel = '🎖️ Vice President';
-          break;
-        case 'congress-role':
-          field = 'congressRoleId';
-          fieldLabel = '🏛️ Congress Member';
-          break;
-        case 'war-role':
-          field = 'warRoleId';
-          fieldLabel = '⚔️ War Specialist';
-          break;
-        case 'economy-role':
-          field = 'economyRoleId';
-          fieldLabel = '🏭 Economy Specialist';
-          break;
-        case 'hybrid-role':
-          field = 'hybridRoleId';
-          fieldLabel = '⚖️ Hybrid Specialist';
-          break;
-        case 'trusted-role':
-          field = 'trustedRoleId';
-          fieldLabel = '🤝 Trusted';
-          break;
-        case 'mu-commander-role':
-          field = 'muCommanderRoleId';
-          fieldLabel = '🎖️ MU Commander';
-          break;
-        case 'mu-owner-role':
-          field = 'muOwnerRoleId';
-          fieldLabel = '👑 MU Owner';
-          break;
-        case 'no-mu-role':
-          field = 'noMuRoleId';
-          fieldLabel = '⛺ No MU Yet';
-          break;
-        default:
-          tracer.checkpoint(9, 'work_complete', { outcome: 'invalid_field' });
-          await safeEditReply(interaction, tracer, { content: '❌ Invalid configuration field.' });
-          return;
+      if (!mapping) {
+        tracer.checkpoint(9, 'work_complete', { outcome: 'invalid_field' });
+        await safeEditReply(interaction, tracer, { content: '❌ Invalid configuration field.' });
+        return;
       }
 
-      await this.guildConfigService.updateConfig(guildId, { [field]: role.id });
-      tracer.checkpoint(9, 'work_complete', { field, roleId: role.id });
+      await this.guildConfigService.updateConfig(guildId, { [mapping.field]: role.id });
+      tracer.checkpoint(9, 'work_complete', { field: mapping.field, roleId: role.id });
 
       await safeEditReply(interaction, tracer, {
-        content: `✅ Successfully configured the **${fieldLabel}** role to <@&${role.id}> for this guild.`,
+        content: `✅ Successfully configured the **${mapping.label}** role to <@&${role.id}> for this guild.`,
       });
     } catch (error) {
       tracer.errorCheckpoint(9, 'work_error', error);
       logger.error({ correlationId: tracer.correlationId, error: (error as Error).message, guildId, subcommand }, 'Failed in configureRoles');
       await safeEditReply(interaction, tracer, {
         content: `❌ Configuration failed: ${(error as Error).message}`,
+      });
+    }
+  }
+
+  /**
+   * Handler for /unconfig role-type:<choice>
+   */
+  async unconfigureRoles(interaction: ChatInputCommandInteraction, correlationId?: string): Promise<void> {
+    const tracer = new CommandTracer('unconfig', correlationId);
+    tracer.checkpoint(6, 'handler_start', { invokerId: interaction.user.id });
+
+    const guildId = interaction.guildId;
+    if (!guildId) {
+      await interaction.reply({ content: '❌ This command must be run inside a guild.', ephemeral: true });
+      return;
+    }
+
+    if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+      await interaction.reply({ content: '❌ You must be an Administrator to unconfigure roles.', ephemeral: true });
+      return;
+    }
+
+    const roleType = interaction.options.getString('role-type', true);
+    logger.info({ correlationId: tracer.correlationId, guildId, roleType }, 'Unconfiguring role field');
+
+    const deferred = await safeDeferReply(interaction, tracer, { ephemeral: true });
+    if (!deferred) return;
+
+    try {
+      tracer.checkpoint(9, 'work_start', { roleType });
+      const mapping = ROLE_CONFIG_FIELDS[roleType];
+
+      if (!mapping) {
+        tracer.checkpoint(9, 'work_complete', { outcome: 'invalid_field' });
+        await safeEditReply(interaction, tracer, { content: '❌ Invalid role type specified.' });
+        return;
+      }
+
+      const existingConfig = await this.guildConfigService.getConfig(guildId);
+      const previousRoleId = existingConfig?.[mapping.field];
+
+      if (!previousRoleId) {
+        tracer.checkpoint(9, 'work_complete', { field: mapping.field, outcome: 'already_unset' });
+        await safeEditReply(interaction, tracer, {
+          content: `ℹ️ The **${mapping.label}** role is not currently configured for this guild.`,
+        });
+        return;
+      }
+
+      await this.guildConfigService.updateConfig(guildId, { [mapping.field]: null });
+      tracer.checkpoint(9, 'work_complete', { field: mapping.field, previousRoleId });
+
+      await safeEditReply(interaction, tracer, {
+        content: `✅ Successfully unconfigured the **${mapping.label}** role (previously <@&${previousRoleId}>) for this guild.`,
+      });
+    } catch (error) {
+      tracer.errorCheckpoint(9, 'work_error', error);
+      logger.error({ correlationId: tracer.correlationId, error: (error as Error).message, guildId, roleType }, 'Failed in unconfigureRoles');
+      await safeEditReply(interaction, tracer, {
+        content: `❌ Unconfiguration failed: ${(error as Error).message}`,
       });
     }
   }

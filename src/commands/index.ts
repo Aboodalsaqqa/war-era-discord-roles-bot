@@ -247,6 +247,32 @@ export const getSlashCommandsDefinition = () => [
     ],
   },
   {
+    name: 'unconfig',
+    description: 'Unconfigure (clear) a bot role option for this guild (Admin only)',
+    default_member_permissions: PermissionFlagsBits.Administrator.toString(),
+    options: [
+      {
+        type: ApplicationCommandOptionType.String,
+        name: 'role-type',
+        description: 'The role configuration to clear',
+        required: true,
+        choices: [
+          { name: '🇪🇬 Egypt Citizen', value: 'citizen-role' },
+          { name: '🛡️ MoD Officer', value: 'officer-role' },
+          { name: '🎖️ Vice President', value: 'vice-president-role' },
+          { name: '🏛️ Congress Member', value: 'congress-role' },
+          { name: '⚔️ War Specialist', value: 'war-role' },
+          { name: '🏭 Economy Specialist', value: 'economy-role' },
+          { name: '⚖️ Hybrid Specialist', value: 'hybrid-role' },
+          { name: '🤝 Trusted', value: 'trusted-role' },
+          { name: '🎖️ MU Commander', value: 'mu-commander-role' },
+          { name: '👑 MU Owner', value: 'mu-owner-role' },
+          { name: '⛺ No MU Yet', value: 'no-mu-role' },
+        ],
+      },
+    ],
+  },
+  {
     name: 'mu-role',
     description: 'Configure Military Unit (MU) role mappings (Admin only)',
     default_member_permissions: PermissionFlagsBits.Administrator.toString(),
@@ -580,6 +606,9 @@ export class CommandRouter {
           break;
         case 'config':
           await this.configCommands.configureRoles(interaction, corrId);
+          break;
+        case 'unconfig':
+          await this.configCommands.unconfigureRoles(interaction, corrId);
           break;
         case 'mu-role':
           await this.configCommands.configureMuRoles(interaction, corrId);
